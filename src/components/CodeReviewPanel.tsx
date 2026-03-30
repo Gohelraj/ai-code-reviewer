@@ -1,0 +1,342 @@
+import { useState } from "react";
+import { motion } from "framer-motion";
+import {
+  Shield, Zap, CheckCircle2, XCircle, AlertTriangle, MessageSquare,
+  ChevronDown, ChevronUp, Copy, Check, Star, BookOpen, Lock, Gauge
+} from "lucide-react";
+import type { CodeReview, ReviewIssue } from "../types";
+
+interface CodeReviewPanelProps {
+  review: CodeReview;
+}
+
+type SeverityConfigEntry = { icon: typeof XCircle; label: string; bg: string; border: string; text: string; badge: string };
+const SEVERITY_CONFIG: Record<string, SeverityConfigEntry> = {
+  critical: { icon: XCircle, label: "Critical", bg: "bg-destructive/10", border: "border-destructive/20", text: "text-destructive", badge: "bg-destructive text-background" },
+  warning: { icon: AlertTriangle, label: "Warning", bg: "bg-yellow-50 dark:bg-yellow-500/10", border: "border-yellow-200 dark:border-yellow-500/20", text: "text-yellow-600 dark:text-yellow-400", badge: "bg-yellow-500 text-background" },
+  suggestion: { icon: MessageSquare, label: "Suggestion", bg: "bg-blue-50 dark:bg-blue-500/10", border: "border-blue-200 dark:border-blue-500/20", text: "text-blue-600 dark:text-blue-400", badge: "bg-blue-500 text-background" },
+  nitpick: { icon: MessageSquare, label: "Nitpick", bg: "bg-muted/50", border: "border-border", text: "text-muted-foreground", badge: "bg-muted text-muted-foreground" },
+  info: { icon: MessageSquare, label: "Info", bg: "bg-muted/50", border: "border-border", text: "text-muted-foreground", badge: "bg-muted text-muted-foreground" },
+};
+const DEFAULT_SEVERITY = SEVERITY_CONFIG.suggestion;
+
+type VerdictConfigEntry = { label: string; icon: typeof CheckCircle2; color: string; bg: string };
+const VERDICT_CONFIG: Record<string, VerdictConfigEntry> = {
+  approve: { label: "Approved", icon: CheckCircle2, color: "text-accent", bg: "bg-accent/10 border-accent/20" },
+  approve_with_suggestions: { label: "Approved with suggestions", icon: CheckCircle2, color: "text-yellow-500", bg: "bg-yellow-50 border-yellow-200 dark:bg-yellow-500/10 dark:border-yellow-500/20" },
+  request_changes: { label: "Changes requested", icon: XCircle, color: "text-destructive", bg: "bg-destructive/10 border-destructive/20" },
+  needs_discussion: { label: "Needs discussion", icon: AlertTriangle, color: "text-yellow-500", bg: "bg-yellow-50 border-yellow-200 dark:bg-yellow-500/10 dark:border-yellow-500/20" },
+};
+const DEFAULT_VERDICT = VERDICT_CONFIG.needs_discussion;
+
+function ScoreBar({ score }: { score: number }) {
+  const pct = (score / 10) * 100;
+  const color = score >= 8 ? "bg-accent" : score >= 6 ? "bg-yellow-500" : "bg-destructive";
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${pct}%` }}
+          transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+          className={`h-full rounded-full ${color}`}
+        />
+      </div>
+      <span className="text-sm font-bold text-foreground w-8">{score}/10</span>
+    </div>
+  );
+}
+
+function IssueCard({ issue, index }: { issue: ReviewIssue; index: number }) {
+  const [expanded, setExpanded] = useState(issue.severity === "critical");
+  const [copied, setCopied] = useState(false);
+  const config = SEVERITY_CONFIG[issue.severity] ?? DEFAULT_SEVERITY;
+  const Icon = config.icon;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(
+      `Issue: ${issue.title}\n\n${issue.description}\n\nSuggested Fix:\n${issue.suggestedFix}`
+    );
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.04, duration: 0.3 }}
+      className={`border rounded-2xl overflow-hidden ${config.border}`}
+    >
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-start gap-3 px-4 py-3.5 hover:bg-secondary/30 transition-colors text-left"
+      >
+        <Icon size={16} className={`flex-shrink-0 mt-0.5 ${config.text}`} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap mb-0.5">
+            <span className={`text-xs font-bold px-1.5 py-0.5 rounded-md ${config.badge}`}>
+              {issue.severity.toUpperCase()}
+            </span>
+            <span className="text-xs text-muted-foreground px-1.5 py-0.5 rounded-md bg-secondary border border-border">
+              {issue.category}
+            </span>
+            <span className="text-xs text-muted-foreground font-mono">{issue.id}</span>
+          </div>
+          <p className="text-sm font-semibold text-foreground">{issue.title}</p>
+          {issue.file && (
+            <p className="text-xs text-muted-foreground font-mono mt-0.5 truncate">{issue.file}</p>
+          )}
+        </div>
+        {expanded ? <ChevronUp size={14} className="text-muted-foreground flex-shrink-0 mt-1" /> : <ChevronDown size={14} className="text-muted-foreground flex-shrink-0 mt-1" />}
+      </button>
+
+      {expanded && (
+        <div className={`border-t px-4 py-4 space-y-4 ${config.border} ${config.bg}`}>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Issue</p>
+            <p className="text-sm text-foreground leading-relaxed">{issue.description}</p>
+          </div>
+
+          {issue.impact && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Impact</p>
+              <p className="text-sm text-foreground leading-relaxed">{issue.impact}</p>
+            </div>
+          )}
+
+          {issue.currentCode && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Problematic Code</p>
+              <pre className="text-xs font-mono bg-card border border-border rounded-xl p-3 overflow-x-auto whitespace-pre-wrap text-destructive">
+                {issue.currentCode}
+              </pre>
+            </div>
+          )}
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Suggested Fix</p>
+              <button onClick={handleCopy} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                {copied ? <Check size={11} className="text-accent" /> : <Copy size={11} />}
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <pre className="text-xs font-mono bg-card border border-border rounded-xl p-3 overflow-x-auto whitespace-pre-wrap text-accent">
+              {issue.suggestedFix}
+            </pre>
+          </div>
+
+          {issue.lineHint && (
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium">Location: </span>{issue.lineHint}
+            </p>
+          )}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+export function CodeReviewPanel({ review }: CodeReviewPanelProps) {
+  const [copied, setCopied] = useState(false);
+  const verdictConfig = VERDICT_CONFIG[review.overallVerdict] ?? DEFAULT_VERDICT;
+  const VerdictIcon = verdictConfig.icon;
+
+  const criticalCount = review.issues.filter((i) => i.severity === "critical").length;
+  const warningCount = review.issues.filter((i) => i.severity === "warning").length;
+  const suggestionCount = review.issues.filter((i) => i.severity === "suggestion" || i.severity === "nitpick").length;
+
+  const copyReview = () => {
+    const text = [
+      `# Code Review: ${review.overallVerdict.toUpperCase()}`,
+      `Score: ${review.overallScore}/10`,
+      ``,
+      `## Summary`,
+      review.executiveSummary,
+      ``,
+      `## Issues (${review.issues.length} total)`,
+      ...review.issues.map((i) => `### [${i.severity.toUpperCase()}] ${i.title}\n${i.description}\n\nFix: ${i.suggestedFix}`),
+      ``,
+      `## Strengths`,
+      ...review.strengths.map((s) => `- ${s}`),
+      ``,
+      `## Merge Readiness`,
+      review.mergeReadiness,
+    ].join("\n");
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+      className="space-y-6"
+    >
+      {/* Verdict card */}
+      <div className="bg-card border border-border rounded-2xl p-6">
+        <div className="flex items-start justify-between gap-4 mb-5">
+          <div>
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Code Review Verdict</p>
+            <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-sm font-semibold ${verdictConfig.bg} ${verdictConfig.color}`}>
+              <VerdictIcon size={15} />
+              {verdictConfig.label}
+            </div>
+          </div>
+          <button
+            onClick={copyReview}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card"
+          >
+            {copied ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
+            {copied ? "Copied!" : "Copy Review"}
+          </button>
+        </div>
+
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+              <Star size={14} />
+              Code Quality Score
+            </p>
+          </div>
+          <ScoreBar score={review.overallScore} />
+        </div>
+
+        <p className="text-sm text-muted-foreground leading-relaxed">{review.executiveSummary}</p>
+
+        {/* Issue summary */}
+        <div className="flex gap-3 mt-4 flex-wrap">
+          {criticalCount > 0 && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-destructive/10 border border-destructive/20">
+              <XCircle size={13} className="text-destructive" />
+              <span className="text-xs font-semibold text-destructive">{criticalCount} Critical</span>
+            </div>
+          )}
+          {warningCount > 0 && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-yellow-50 border border-yellow-200 dark:bg-yellow-500/10 dark:border-yellow-500/20">
+              <AlertTriangle size={13} className="text-yellow-600 dark:text-yellow-400" />
+              <span className="text-xs font-semibold text-yellow-600 dark:text-yellow-400">{warningCount} Warning{warningCount !== 1 ? "s" : ""}</span>
+            </div>
+          )}
+          {suggestionCount > 0 && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 dark:bg-blue-500/10 dark:border-blue-500/20">
+              <MessageSquare size={13} className="text-blue-600 dark:text-blue-400" />
+              <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">{suggestionCount} Suggestion{suggestionCount !== 1 ? "s" : ""}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Issues */}
+      {review.issues.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-foreground mb-3">
+            Issues & Suggestions ({review.issues.length})
+          </h3>
+          <div className="space-y-3">
+            {review.issues
+              .sort((a, b) => {
+                const order = { critical: 0, warning: 1, suggestion: 2, nitpick: 3 };
+                return order[a.severity] - order[b.severity];
+              })
+              .map((issue, i) => (
+                <IssueCard key={issue.id} issue={issue} index={i} />
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* Strengths */}
+      {review.strengths.length > 0 && (
+        <div className="bg-card border border-border rounded-2xl p-6">
+          <h3 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
+            <CheckCircle2 size={15} className="text-accent" />
+            Strengths
+          </h3>
+          <div className="space-y-2">
+            {review.strengths.map((strength, i) => (
+              <div key={i} className="flex items-start gap-2.5">
+                <div className="w-5 h-5 rounded-full bg-accent/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <CheckCircle2 size={11} className="text-accent" />
+                </div>
+                <p className="text-sm text-foreground">{strength}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Architecture + Security + Performance */}
+      <div className="grid grid-cols-1 gap-4">
+        {review.architectureObservations.length > 0 && (
+          <div className="bg-card border border-border rounded-2xl p-6">
+            <h3 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
+              <BookOpen size={15} />
+              Architecture Observations
+            </h3>
+            <div className="space-y-3">
+              {review.architectureObservations.map((obs, i) => (
+                <div key={i} className="border-l-2 border-border pl-4">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{obs.aspect}</p>
+                  <p className="text-sm text-foreground mt-0.5">{obs.observation}</p>
+                  <p className="text-sm text-muted-foreground mt-1">→ {obs.recommendation}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {review.securityConsiderations.length > 0 && (
+            <div className="bg-card border border-border rounded-2xl p-5">
+              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                <Lock size={14} />
+                Security
+              </h3>
+              <ul className="space-y-2">
+                {review.securityConsiderations.map((s, i) => (
+                  <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
+                    <Shield size={13} className="text-muted-foreground flex-shrink-0 mt-0.5" />
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {review.performanceConsiderations.length > 0 && (
+            <div className="bg-card border border-border rounded-2xl p-5">
+              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                <Gauge size={14} />
+                Performance
+              </h3>
+              <ul className="space-y-2">
+                {review.performanceConsiderations.map((p, i) => (
+                  <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
+                    <Zap size={13} className="text-muted-foreground flex-shrink-0 mt-0.5" />
+                    {p}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* Testing + Merge Readiness */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="bg-card border border-border rounded-2xl p-5">
+            <h3 className="text-sm font-semibold text-foreground mb-2">Testing Assessment</h3>
+            <p className="text-sm text-muted-foreground leading-relaxed">{review.testingAssessment}</p>
+          </div>
+          <div className={`rounded-2xl p-5 border ${verdictConfig.bg}`}>
+            <h3 className={`text-sm font-semibold mb-2 ${verdictConfig.color}`}>Merge Readiness</h3>
+            <p className="text-sm text-foreground leading-relaxed">{review.mergeReadiness}</p>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
