@@ -14,5 +14,14 @@ export default defineConfig({
     strictPort: true,
     host: true,
     allowedHosts: true,
+    proxy: {
+      // Proxies /api/gitlab/... → https://gitlab.com/...
+      // Needed because GitLab does not send Access-Control-Allow-Origin: * headers.
+      '/api/gitlab': {
+        target: 'https://gitlab.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/gitlab/, ''),
+      },
+    },
   }
 });
