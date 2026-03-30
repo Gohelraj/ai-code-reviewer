@@ -1,25 +1,7 @@
 import type { MRData, ChangeSummary, ExecutionFlow, CodeReview, FileDiff, PRInfo } from "../types";
 import type { AIConfig } from "../components/AISettings";
 
-const ANALYZE_URL = "https://r0u311ck--analyze-mr.functions.blink.new";
-
 // ─── Shared helpers ───────────────────────────────────────────────────────────
-
-async function callEdgeFunction<T>(url: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  const data = await res.json();
-
-  if (!res.ok) {
-    throw new Error(data.error ?? `Request failed with status ${res.status}`);
-  }
-
-  return data as T;
-}
 
 // ─── GitHub direct (CORS: access-control-allow-origin: *) ────────────────────
 
@@ -344,9 +326,10 @@ export async function analyzeSummary(mrData: MRData, aiConfig: AIConfig): Promis
   const { pr, files } = mrData;
   const diffContent = buildDiffContent(files);
 
-  if (aiConfig.provider === "openrouter" && aiConfig.apiKey) {
-    const systemPrompt = `You are an expert software engineer reviewing a pull/merge request. Analyze the PR and produce a structured summary. Always return valid JSON matching the exact schema.`;
-    const userPrompt = `PR Title: ${pr.title}
+  if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required. Please configure it in AI Settings.");
+
+  const systemPrompt = `You are an expert software engineer reviewing a pull/merge request. Analyze the PR and produce a structured summary. Always return valid JSON matching the exact schema.`;
+  const userPrompt = `PR Title: ${pr.title}
 PR Description: ${pr.description || "No description provided"}
 Base Branch: ${pr.baseBranch} → Head Branch: ${pr.headBranch}
 Author: ${pr.author}
@@ -361,22 +344,15 @@ Provide a comprehensive summary. For breakingChangesDescription, use an empty st
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ], SUMMARY_SCHEMA);
-  }
-
-  const result = await callEdgeFunction<{ success: boolean; data: ChangeSummary }>(ANALYZE_URL, {
-    pr,
-    files,
-    analysisType: "summary",
-  });
-  return result.data;
 }
 
 export async function analyzeExecutionFlow(mrData: MRData, aiConfig: AIConfig): Promise<ExecutionFlow> {
   const { pr, files } = mrData;
   const diffContent = buildDiffContent(files);
 
-  if (aiConfig.provider === "openrouter" && aiConfig.apiKey) {
-    const fileList = files.map((f) => `${f.filename} [${f.status}]`).join("\n");
+  if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required. Please configure it in AI Settings.");
+
+  const fileList = files.map((f) => `${f.filename} [${f.status}]`).join("\n");
     const systemPrompt = `You are a senior software architect. Organize changed files into a logical execution flow grouped by architectural layer. Always return valid JSON.`;
     const userPrompt = `PR Title: ${pr.title}
 Changed Files:
@@ -391,22 +367,15 @@ Organize files into execution flow groups (Route/Entry → Middleware → Contro
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ], FLOW_SCHEMA);
-  }
-
-  const result = await callEdgeFunction<{ success: boolean; data: ExecutionFlow }>(ANALYZE_URL, {
-    pr,
-    files,
-    analysisType: "executionFlow",
-  });
-  return result.data;
 }
 
 export async function analyzeCodeReview(mrData: MRData, aiConfig: AIConfig): Promise<CodeReview> {
   const { pr, files } = mrData;
   const diffContent = buildDiffContent(files);
 
-  if (aiConfig.provider === "openrouter" && aiConfig.apiKey) {
-    const systemPrompt = `You are a very senior software engineer (10+ years) performing a thorough code review. Be precise, constructive, and insightful. Focus on things that matter. Always return valid JSON. For optional string fields like file, lineHint, currentCode, impact — always provide a string value (use "" if not applicable).`;
+  if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required. Please configure it in AI Settings.");
+
+  const systemPrompt = `You are a very senior software engineer (10+ years) performing a thorough code review. Be precise, constructive, and insightful. Focus on things that matter. Always return valid JSON. For optional string fields like file, lineHint, currentCode, impact — always provide a string value (use "" if not applicable).`;
     const userPrompt = `PR Title: ${pr.title}
 PR Description: ${pr.description || "No description"}
 Author: ${pr.author}
@@ -421,12 +390,4 @@ Perform a comprehensive senior-level code review.`;
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ], REVIEW_SCHEMA);
-  }
-
-  const result = await callEdgeFunction<{ success: boolean; data: CodeReview }>(ANALYZE_URL, {
-    pr,
-    files,
-    analysisType: "codeReview",
-  });
-  return result.data;
 }

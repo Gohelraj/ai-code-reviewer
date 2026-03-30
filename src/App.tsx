@@ -6,6 +6,7 @@ import { ResultsDashboard } from "./components/ResultsDashboard";
 import { fetchMRDiff, analyzeSummary, analyzeExecutionFlow, analyzeCodeReview } from "./lib/api";
 import type { AnalysisState } from "./types";
 import type { AIConfig } from "./components/AISettings";
+import { useDarkMode } from "./lib/useDarkMode";
 
 const INITIAL_STATE: AnalysisState = {
   step: "idle",
@@ -20,6 +21,8 @@ const INITIAL_STATE: AnalysisState = {
 function App() {
   const [state, setState] = useState<AnalysisState>(INITIAL_STATE);
   const [activeAIConfig, setActiveAIConfig] = useState<AIConfig | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const { theme, setTheme } = useDarkMode();
 
   const updateState = useCallback((patch: Partial<AnalysisState>) => {
     setState((prev) => ({ ...prev, ...patch }));
@@ -49,10 +52,8 @@ function App() {
 
       await Promise.all([summaryPromise, flowPromise]);
 
-      // Step 4: Code review
-      updateState({ step: "reviewing" });
-      const codeReview = await analyzeCodeReview(mrData, aiConfig);
-      updateState({ codeReview, step: "done" });
+      // Done — code review is triggered manually by the user
+      updateState({ step: "done" });
     } catch (err) {
       const error = err instanceof Error ? err.message : "An unexpected error occurred";
       updateState({ step: "error", error });
@@ -62,15 +63,30 @@ function App() {
   const handleReset = useCallback(() => {
     setState(INITIAL_STATE);
     setActiveAIConfig(null);
+    setReviewLoading(false);
   }, []);
 
   const handleTabChange = useCallback((tab: "summary" | "flow" | "review") => {
     updateState({ activeTab: tab });
   }, [updateState]);
 
+  const handleTriggerReview = useCallback(async () => {
+    if (!state.mrData || !activeAIConfig || reviewLoading) return;
+    setReviewLoading(true);
+    try {
+      const codeReview = await analyzeCodeReview(state.mrData, activeAIConfig);
+      updateState({ codeReview, activeTab: "review" });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : "Code review failed";
+      updateState({ error });
+    } finally {
+      setReviewLoading(false);
+    }
+  }, [state.mrData, activeAIConfig, reviewLoading, updateState]);
+
   // Show input form
   if (state.step === "idle") {
-    return <InputForm onSubmit={handleAnalyze} isLoading={false} />;
+    return <InputForm onSubmit={handleAnalyze} isLoading={false} theme={theme} onThemeChange={setTheme} />;
   }
 
   // Show analysis in progress or error
@@ -83,6 +99,10 @@ function App() {
           onReset={handleReset}
           onTabChange={handleTabChange}
           aiConfig={activeAIConfig}
+          theme={theme}
+          onThemeChange={setTheme}
+          reviewLoading={reviewLoading}
+          onTriggerReview={handleTriggerReview}
         />
       );
     }
@@ -94,6 +114,8 @@ function App() {
         error={state.error}
         onReset={handleReset}
         aiConfig={activeAIConfig}
+        theme={theme}
+        onThemeChange={setTheme}
       />
     );
   }
@@ -105,6 +127,10 @@ function App() {
       onReset={handleReset}
       onTabChange={handleTabChange}
       aiConfig={activeAIConfig}
+      theme={theme}
+      onThemeChange={setTheme}
+      reviewLoading={reviewLoading}
+      onTriggerReview={handleTriggerReview}
     />
   );
 }

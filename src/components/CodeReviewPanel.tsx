@@ -47,87 +47,106 @@ function ScoreBar({ score }: { score: number }) {
   );
 }
 
-function IssueCard({ issue, index }: { issue: ReviewIssue; index: number }) {
-  const [expanded, setExpanded] = useState(issue.severity === "critical");
+function CodeBlock({ code, label, variant = "neutral" }: { code: string; label: string; variant?: "destructive" | "accent" | "neutral" }) {
   const [copied, setCopied] = useState(false);
-  const config = SEVERITY_CONFIG[issue.severity] ?? DEFAULT_SEVERITY;
-  const Icon = config.icon;
+  const colorMap = {
+    destructive: "border-destructive/20 bg-destructive/5",
+    accent: "border-accent/20 bg-accent/5",
+    neutral: "border-border bg-secondary/50",
+  };
+  const textMap = {
+    destructive: "text-destructive dark:text-red-400",
+    accent: "text-accent dark:text-emerald-400",
+    neutral: "text-foreground",
+  };
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(
-      `Issue: ${issue.title}\n\n${issue.description}\n\nSuggested Fix:\n${issue.suggestedFix}`
-    );
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-md hover:bg-secondary"
+        >
+          {copied ? <Check size={11} className="text-accent" /> : <Copy size={11} />}
+          {copied ? "Copied!" : "Copy"}
+        </button>
+      </div>
+      <div className={`relative rounded-xl border ${colorMap[variant]} overflow-hidden`}>
+        <pre className={`text-xs font-mono p-4 overflow-x-auto whitespace-pre leading-relaxed ${textMap[variant]}`}><code>{code.trim()}</code></pre>
+      </div>
+    </div>
+  );
+}
+
+function IssueCard({ issue, index }: { issue: ReviewIssue; index: number }) {
+  const [expanded, setExpanded] = useState(issue.severity === "critical");
+  const config = SEVERITY_CONFIG[issue.severity] ?? DEFAULT_SEVERITY;
+  const Icon = config.icon;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04, duration: 0.3 }}
-      className={`border rounded-2xl overflow-hidden ${config.border}`}
+      className={`border rounded-2xl overflow-hidden ${config.border} bg-card`}
     >
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-start gap-3 px-4 py-3.5 hover:bg-secondary/30 transition-colors text-left"
+        className="w-full flex items-start gap-3 px-5 py-4 hover:bg-secondary/30 transition-colors text-left"
       >
         <Icon size={16} className={`flex-shrink-0 mt-0.5 ${config.text}`} />
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap mb-0.5">
-            <span className={`text-xs font-bold px-1.5 py-0.5 rounded-md ${config.badge}`}>
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <span className={`text-xs font-bold px-2 py-0.5 rounded-md ${config.badge}`}>
               {issue.severity.toUpperCase()}
             </span>
-            <span className="text-xs text-muted-foreground px-1.5 py-0.5 rounded-md bg-secondary border border-border">
+            <span className="text-xs text-muted-foreground px-2 py-0.5 rounded-md bg-secondary border border-border">
               {issue.category}
             </span>
-            <span className="text-xs text-muted-foreground font-mono">{issue.id}</span>
           </div>
-          <p className="text-sm font-semibold text-foreground">{issue.title}</p>
+          <p className="text-sm font-semibold text-foreground leading-snug">{issue.title}</p>
           {issue.file && (
-            <p className="text-xs text-muted-foreground font-mono mt-0.5 truncate">{issue.file}</p>
+            <div className="flex items-center gap-1.5 mt-1.5">
+              <span className="text-xs text-muted-foreground font-mono bg-muted px-2 py-0.5 rounded-md truncate max-w-[300px]">
+                {issue.file}{issue.lineHint ? ` · ${issue.lineHint}` : ""}
+              </span>
+            </div>
           )}
         </div>
         {expanded ? <ChevronUp size={14} className="text-muted-foreground flex-shrink-0 mt-1" /> : <ChevronDown size={14} className="text-muted-foreground flex-shrink-0 mt-1" />}
       </button>
 
       {expanded && (
-        <div className={`border-t px-4 py-4 space-y-4 ${config.border} ${config.bg}`}>
+        <div className={`border-t px-5 py-5 space-y-5 ${config.border} ${config.bg}`}>
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Issue</p>
             <p className="text-sm text-foreground leading-relaxed">{issue.description}</p>
           </div>
 
+          {issue.currentCode && (
+            <CodeBlock code={issue.currentCode} label="Problematic Code" variant="destructive" />
+          )}
+
+          {issue.suggestedFix && (
+            <CodeBlock code={issue.suggestedFix} label="Suggested Fix" variant="accent" />
+          )}
+
           {issue.impact && (
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Impact</p>
+            <div className="bg-muted/50 rounded-xl px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Impact</p>
               <p className="text-sm text-foreground leading-relaxed">{issue.impact}</p>
             </div>
           )}
 
-          {issue.currentCode && (
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Problematic Code</p>
-              <pre className="text-xs font-mono bg-card border border-border rounded-xl p-3 overflow-x-auto whitespace-pre-wrap text-destructive">
-                {issue.currentCode}
-              </pre>
-            </div>
-          )}
-
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Suggested Fix</p>
-              <button onClick={handleCopy} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
-                {copied ? <Check size={11} className="text-accent" /> : <Copy size={11} />}
-                {copied ? "Copied" : "Copy"}
-              </button>
-            </div>
-            <pre className="text-xs font-mono bg-card border border-border rounded-xl p-3 overflow-x-auto whitespace-pre-wrap text-accent">
-              {issue.suggestedFix}
-            </pre>
-          </div>
-
-          {issue.lineHint && (
+          {issue.lineHint && !issue.file && (
             <p className="text-xs text-muted-foreground">
               <span className="font-medium">Location: </span>{issue.lineHint}
             </p>
@@ -177,64 +196,85 @@ export function CodeReviewPanel({ review }: CodeReviewPanelProps) {
       className="space-y-6"
     >
       {/* Verdict card */}
-      <div className="bg-card border border-border rounded-2xl p-6">
-        <div className="flex items-start justify-between gap-4 mb-5">
-          <div>
-            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Code Review Verdict</p>
-            <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-sm font-semibold ${verdictConfig.bg} ${verdictConfig.color}`}>
-              <VerdictIcon size={15} />
-              {verdictConfig.label}
+      <div className="bg-card border border-border rounded-2xl overflow-hidden">
+        <div className="p-6 pb-5">
+          <div className="flex items-start justify-between gap-4 mb-6">
+            <div>
+              <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Code Review Verdict</p>
+              <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-bold ${verdictConfig.bg} ${verdictConfig.color}`}>
+                <VerdictIcon size={16} />
+                {verdictConfig.label}
+              </div>
+            </div>
+            <button
+              onClick={copyReview}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card"
+            >
+              {copied ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
+              {copied ? "Copied!" : "Copy Review"}
+            </button>
+          </div>
+
+          {/* Score */}
+          <div className="flex items-center gap-5 mb-6">
+            <div className="relative w-20 h-20 flex-shrink-0">
+              <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
+                <circle cx="40" cy="40" r="34" fill="none" stroke="hsl(var(--muted))" strokeWidth="6" />
+                <motion.circle
+                  cx="40" cy="40" r="34" fill="none"
+                  stroke={review.overallScore >= 8 ? "hsl(var(--accent))" : review.overallScore >= 6 ? "hsl(38 92% 50%)" : "hsl(var(--destructive))"}
+                  strokeWidth="6" strokeLinecap="round"
+                  strokeDasharray={`${(review.overallScore / 10) * 213.6} 213.6`}
+                  initial={{ strokeDasharray: "0 213.6" }}
+                  animate={{ strokeDasharray: `${(review.overallScore / 10) * 213.6} 213.6` }}
+                  transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
+                />
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-xl font-bold text-foreground">{review.overallScore}</span>
+                <span className="text-xs text-muted-foreground">/10</span>
+              </div>
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5">
+                <Star size={14} />
+                Code Quality Score
+              </p>
+              <p className="text-sm text-muted-foreground leading-relaxed">{review.executiveSummary}</p>
             </div>
           </div>
-          <button
-            onClick={copyReview}
-            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card"
-          >
-            {copied ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
-            {copied ? "Copied!" : "Copy Review"}
-          </button>
-        </div>
 
-        <div className="mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-              <Star size={14} />
-              Code Quality Score
-            </p>
+          {/* Issue summary pills */}
+          <div className="flex gap-2.5 flex-wrap">
+            {criticalCount > 0 && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-destructive/10 border border-destructive/20">
+                <XCircle size={13} className="text-destructive" />
+                <span className="text-xs font-semibold text-destructive">{criticalCount} Critical</span>
+              </div>
+            )}
+            {warningCount > 0 && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-yellow-50 border border-yellow-200 dark:bg-yellow-500/10 dark:border-yellow-500/20">
+                <AlertTriangle size={13} className="text-yellow-600 dark:text-yellow-400" />
+                <span className="text-xs font-semibold text-yellow-600 dark:text-yellow-400">{warningCount} Warning{warningCount !== 1 ? "s" : ""}</span>
+              </div>
+            )}
+            {suggestionCount > 0 && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 dark:bg-blue-500/10 dark:border-blue-500/20">
+                <MessageSquare size={13} className="text-blue-600 dark:text-blue-400" />
+                <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">{suggestionCount} Suggestion{suggestionCount !== 1 ? "s" : ""}</span>
+              </div>
+            )}
           </div>
-          <ScoreBar score={review.overallScore} />
-        </div>
-
-        <p className="text-sm text-muted-foreground leading-relaxed">{review.executiveSummary}</p>
-
-        {/* Issue summary */}
-        <div className="flex gap-3 mt-4 flex-wrap">
-          {criticalCount > 0 && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-destructive/10 border border-destructive/20">
-              <XCircle size={13} className="text-destructive" />
-              <span className="text-xs font-semibold text-destructive">{criticalCount} Critical</span>
-            </div>
-          )}
-          {warningCount > 0 && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-yellow-50 border border-yellow-200 dark:bg-yellow-500/10 dark:border-yellow-500/20">
-              <AlertTriangle size={13} className="text-yellow-600 dark:text-yellow-400" />
-              <span className="text-xs font-semibold text-yellow-600 dark:text-yellow-400">{warningCount} Warning{warningCount !== 1 ? "s" : ""}</span>
-            </div>
-          )}
-          {suggestionCount > 0 && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 dark:bg-blue-500/10 dark:border-blue-500/20">
-              <MessageSquare size={13} className="text-blue-600 dark:text-blue-400" />
-              <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">{suggestionCount} Suggestion{suggestionCount !== 1 ? "s" : ""}</span>
-            </div>
-          )}
         </div>
       </div>
 
       {/* Issues */}
       {review.issues.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-foreground mb-3">
-            Issues & Suggestions ({review.issues.length})
+          <h3 className="text-base font-semibold text-foreground mb-4 flex items-center gap-2">
+            <Shield size={16} />
+            Issues & Suggestions
+            <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{review.issues.length}</span>
           </h3>
           <div className="space-y-3">
             {review.issues
@@ -252,11 +292,11 @@ export function CodeReviewPanel({ review }: CodeReviewPanelProps) {
       {/* Strengths */}
       {review.strengths.length > 0 && (
         <div className="bg-card border border-border rounded-2xl p-6">
-          <h3 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
-            <CheckCircle2 size={15} className="text-accent" />
+          <h3 className="text-base font-semibold text-foreground mb-4 flex items-center gap-2">
+            <CheckCircle2 size={16} className="text-accent" />
             Strengths
           </h3>
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {review.strengths.map((strength, i) => (
               <div key={i} className="flex items-start gap-2.5">
                 <div className="w-5 h-5 rounded-full bg-accent/10 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -273,16 +313,19 @@ export function CodeReviewPanel({ review }: CodeReviewPanelProps) {
       <div className="grid grid-cols-1 gap-4">
         {review.architectureObservations.length > 0 && (
           <div className="bg-card border border-border rounded-2xl p-6">
-            <h3 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
-              <BookOpen size={15} />
+            <h3 className="text-base font-semibold text-foreground mb-4 flex items-center gap-2">
+              <BookOpen size={16} />
               Architecture Observations
             </h3>
-            <div className="space-y-3">
+            <div className="space-y-4">
               {review.architectureObservations.map((obs, i) => (
-                <div key={i} className="border-l-2 border-border pl-4">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{obs.aspect}</p>
-                  <p className="text-sm text-foreground mt-0.5">{obs.observation}</p>
-                  <p className="text-sm text-muted-foreground mt-1">→ {obs.recommendation}</p>
+                <div key={i} className="bg-secondary/50 rounded-xl p-4">
+                  <p className="text-xs font-bold text-foreground uppercase tracking-wider mb-1.5">{obs.aspect}</p>
+                  <p className="text-sm text-foreground leading-relaxed">{obs.observation}</p>
+                  <div className="mt-2 flex items-start gap-1.5">
+                    <span className="text-accent text-sm">→</span>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{obs.recommendation}</p>
+                  </div>
                 </div>
               ))}
             </div>

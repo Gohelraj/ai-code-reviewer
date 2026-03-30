@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { GitPullRequest, Key, ChevronDown, ChevronUp, Sparkles, GitBranch, ArrowRight, Shield } from "lucide-react";
 import { AISettings, loadAIConfig } from "./AISettings";
 import type { AIConfig } from "./AISettings";
+import { ThemeToggle } from "./ThemeToggle";
 
 export interface SubmitPayload {
   url: string;
@@ -13,6 +14,8 @@ export interface SubmitPayload {
 interface InputFormProps {
   onSubmit: (payload: SubmitPayload) => void;
   isLoading: boolean;
+  theme: "light" | "dark" | "system";
+  onThemeChange: (theme: "light" | "dark" | "system") => void;
 }
 
 const EXAMPLE_URLS = [
@@ -21,7 +24,7 @@ const EXAMPLE_URLS = [
   "https://gitlab.com/gitlab-org/gitlab/-/merge_requests/12345",
 ];
 
-export function InputForm({ onSubmit, isLoading }: InputFormProps) {
+export function InputForm({ onSubmit, isLoading, theme, onThemeChange }: InputFormProps) {
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [showToken, setShowToken] = useState(false);
@@ -45,6 +48,7 @@ export function InputForm({ onSubmit, isLoading }: InputFormProps) {
           </div>
           <span className="font-semibold text-foreground tracking-tight text-lg">MergeAI Reviewer</span>
           <div className="ml-auto flex items-center gap-2">
+            <ThemeToggle theme={theme} onThemeChange={onThemeChange} />
             <span className="text-xs text-muted-foreground bg-muted px-2.5 py-1 rounded-full font-medium">
               Powered by AI
             </span>

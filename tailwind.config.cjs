@@ -4,12 +4,9 @@ module.exports = {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
-    // Scan @blinkdotnew/ui so its Tailwind classes aren't purged
-    "./node_modules/@blinkdotnew/ui/dist/index.mjs",
   ],
   theme: {
     extend: {
-      // ── Border radius — must match @blinkdotnew/ui's tailwind.config.ts ──
       borderRadius: {
         sm:   'var(--radius-sm)',
         md:   'var(--radius-md)',
@@ -19,7 +16,7 @@ module.exports = {
         DEFAULT: 'var(--radius-md)',
       },
 
-      // ── Box shadows — must match @blinkdotnew/ui's tailwind.config.ts ────
+      // ── Box shadows ────────────────────────────────────────────────────
       boxShadow: {
         sm:      'var(--shadow-sm)',
         DEFAULT: 'var(--shadow-md)',

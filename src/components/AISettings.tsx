@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Cpu, ChevronDown, ChevronUp, Eye, EyeOff, ExternalLink, Check } from "lucide-react";
 
 export interface AIConfig {
-  provider: "blink" | "openrouter";
+  provider: "openrouter";
   apiKey: string;
   model: string;
 }
@@ -28,7 +28,7 @@ export const OPENROUTER_MODELS = [
 ];
 
 const DEFAULT_CONFIG: AIConfig = {
-  provider: "blink",
+  provider: "openrouter",
   apiKey: "",
   model: "anthropic/claude-sonnet-4-5",
 };
@@ -68,17 +68,13 @@ export function AISettings({ config, onChange, disabled }: AISettingsProps) {
   const [showKey, setShowKey] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const isOpenRouter = config.provider === "openrouter";
+  const isOpenRouter = true;
   const selectedModel = OPENROUTER_MODELS.find((m) => m.id === config.model);
 
   const handleSave = () => {
     saveAIConfig(config);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-  };
-
-  const handleProviderToggle = (provider: "blink" | "openrouter") => {
-    onChange({ ...config, provider });
   };
 
   return (
@@ -94,12 +90,12 @@ export function AISettings({ config, onChange, disabled }: AISettingsProps) {
         <div className="flex-1 min-w-0">
           <span className="text-sm font-medium text-foreground">AI Model Settings</span>
           <span className="text-xs text-muted-foreground ml-2">
-            {isOpenRouter && config.apiKey
+            {config.apiKey
               ? `OpenRouter · ${selectedModel?.label ?? config.model}`
-              : "Default · GPT-4.1 (Blink)"}
+              : "OpenRouter · No API key set"}
           </span>
         </div>
-        {isOpenRouter && config.apiKey && (
+        {config.apiKey && (
           <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20">
             Custom
           </span>
@@ -117,35 +113,10 @@ export function AISettings({ config, onChange, disabled }: AISettingsProps) {
             className="overflow-hidden"
           >
             <div className="px-4 pb-4 pt-3 border-t border-border bg-secondary/30 space-y-4">
-              {/* Provider toggle */}
+              {/* Provider info */}
               <div>
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Provider</p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleProviderToggle("blink")}
-                    disabled={disabled}
-                    className={`flex-1 px-3 py-2 rounded-lg border text-sm font-medium transition-all ${
-                      !isOpenRouter
-                        ? "bg-foreground text-background border-foreground"
-                        : "bg-card text-muted-foreground border-border hover:bg-secondary hover:text-foreground"
-                    }`}
-                  >
-                    Blink AI (free)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleProviderToggle("openrouter")}
-                    disabled={disabled}
-                    className={`flex-1 px-3 py-2 rounded-lg border text-sm font-medium transition-all ${
-                      isOpenRouter
-                        ? "bg-foreground text-background border-foreground"
-                        : "bg-card text-muted-foreground border-border hover:bg-secondary hover:text-foreground"
-                    }`}
-                  >
-                    OpenRouter (BYOK)
-                  </button>
-                </div>
+                <p className="text-sm text-foreground">OpenRouter — Bring Your Own Key</p>
               </div>
 
               {isOpenRouter && (
@@ -223,9 +194,9 @@ export function AISettings({ config, onChange, disabled }: AISettingsProps) {
                 </>
               )}
 
-              {!isOpenRouter && (
+              {!config.apiKey && (
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Uses Blink's built-in AI (GPT-4.1) — no key needed. Switch to OpenRouter to use your own API key with any supported model.
+                  Provide your OpenRouter API key to start analyzing. Get one at openrouter.ai/keys.
                 </p>
               )}
             </div>

@@ -3,6 +3,7 @@ import { GitPullRequest, FileText, GitBranch, Search, CheckCircle, Cpu } from "l
 import type { AnalysisStep } from "../types";
 import type { AIConfig } from "./AISettings";
 import { OPENROUTER_MODELS } from "./AISettings";
+import { ThemeToggle } from "./ThemeToggle";
 
 interface AnalysisProgressProps {
   step: AnalysisStep;
@@ -10,13 +11,14 @@ interface AnalysisProgressProps {
   error?: string | null;
   onReset: () => void;
   aiConfig?: AIConfig | null;
+  theme: "light" | "dark" | "system";
+  onThemeChange: (theme: "light" | "dark" | "system") => void;
 }
 
 const STEPS = [
   { id: "fetching", label: "Fetching diff", icon: GitBranch, description: "Retrieving file changes from the repository" },
   { id: "summarizing", label: "Summarizing changes", icon: FileText, description: "AI is analyzing what changed and why" },
   { id: "flowing", label: "Mapping execution flow", icon: GitPullRequest, description: "Ordering changes by architectural layer" },
-  { id: "reviewing", label: "Code review", icon: Search, description: "Performing senior-level code analysis" },
 ];
 
 function getStepIndex(step: AnalysisStep): number {
@@ -24,10 +26,10 @@ function getStepIndex(step: AnalysisStep): number {
   return order.indexOf(step);
 }
 
-export function AnalysisProgress({ step, prTitle, error, onReset, aiConfig }: AnalysisProgressProps) {
+export function AnalysisProgress({ step, prTitle, error, onReset, aiConfig, theme, onThemeChange }: AnalysisProgressProps) {
   const modelLabel = aiConfig?.provider === "openrouter" && aiConfig.apiKey
     ? OPENROUTER_MODELS.find((m) => m.id === aiConfig.model)?.label ?? aiConfig.model
-    : "GPT-4.1 (Blink)";
+    : "No model configured";
   const currentIdx = getStepIndex(step);
 
   if (error) {
@@ -63,6 +65,9 @@ export function AnalysisProgress({ step, prTitle, error, onReset, aiConfig }: An
             <GitPullRequest size={16} className="text-background" />
           </div>
           <span className="font-semibold text-foreground tracking-tight text-lg">MergeAI Reviewer</span>
+          <div className="ml-auto">
+            <ThemeToggle theme={theme} onThemeChange={onThemeChange} />
+          </div>
         </div>
       </header>
 
