@@ -25,10 +25,18 @@ export interface PRInfo {
   url: string;
 }
 
+export interface DiffRefs {
+  baseSha: string;
+  headSha: string;
+  startSha: string;
+}
+
 export interface MRData {
   platform: "github" | "gitlab";
   pr: PRInfo;
   files: FileDiff[];
+  /** GitLab diff_refs needed for inline MR comments with position */
+  diffRefs?: DiffRefs;
 }
 
 export interface KeyChange {

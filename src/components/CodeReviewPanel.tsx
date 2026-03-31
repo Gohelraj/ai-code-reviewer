@@ -2,16 +2,18 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   Shield, Zap, CheckCircle2, XCircle, AlertTriangle, MessageSquare,
-  ChevronDown, ChevronUp, Copy, Check, Star, BookOpen, Lock, Gauge, Send, FileCode, MapPin
+  ChevronDown, ChevronUp, Copy, Check, Star, BookOpen, Lock, Gauge, Send, FileCode, MapPin,
+  Square, CheckSquare, ListChecks
 } from "lucide-react";
 import toast from "react-hot-toast";
-import type { CodeReview, ReviewIssue } from "../types";
-import { postReviewComment } from "../lib/github-comment";
+import type { CodeReview, ReviewIssue, MRData } from "../types";
+import { postReviewComment, postInlineComments, type InlinePostResult } from "../lib/github-comment";
 
 interface CodeReviewPanelProps {
   review: CodeReview;
   prUrl?: string;
   prToken?: string;
+  mrData?: MRData | null;
 }
 
 type SeverityConfigEntry = { icon: typeof XCircle; label: string; bg: string; border: string; text: string; badge: string };
@@ -90,22 +92,37 @@ function CodeBlock({ code, label, variant = "neutral" }: { code: string; label: 
   );
 }
 
-function IssueCard({ issue, index }: { issue: ReviewIssue; index: number }) {
+function IssueCard({ issue, index, selected, onToggleSelect }: { issue: ReviewIssue; index: number; selected?: boolean; onToggleSelect?: () => void }) {
   const [expanded, setExpanded] = useState(issue.severity === "critical");
   const config = SEVERITY_CONFIG[issue.severity] ?? DEFAULT_SEVERITY;
   const Icon = config.icon;
+  const showCheckbox = onToggleSelect !== undefined;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04, duration: 0.3 }}
-      className={`border rounded-2xl overflow-hidden ${config.border} bg-card ${issue.severity === "critical" ? "border-l-4 border-l-destructive" : ""}`}
+      className={`border rounded-2xl overflow-hidden ${config.border} bg-card ${issue.severity === "critical" ? "border-l-4 border-l-destructive" : ""} ${selected ? "ring-2 ring-primary/30" : ""}`}
     >
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-start gap-3 px-5 py-4 hover:bg-secondary/30 transition-colors text-left"
-      >
+      <div className="flex items-start">
+        {showCheckbox && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleSelect!(); }}
+            className="flex-shrink-0 pl-4 pt-4 pr-1 hover:opacity-80 transition-opacity"
+            title={selected ? "Deselect issue" : "Select issue for posting"}
+          >
+            {selected ? (
+              <CheckSquare size={18} className="text-primary" />
+            ) : (
+              <Square size={18} className="text-muted-foreground/50" />
+            )}
+          </button>
+        )}
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className={`w-full flex items-start gap-3 ${showCheckbox ? "pl-2" : "px-5"} pr-5 py-4 hover:bg-secondary/30 transition-colors text-left`}
+        >
         <Icon size={16} className={`flex-shrink-0 mt-0.5 ${config.text}`} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -136,6 +153,7 @@ function IssueCard({ issue, index }: { issue: ReviewIssue; index: number }) {
         </div>
         {expanded ? <ChevronUp size={14} className="text-muted-foreground flex-shrink-0 mt-1" /> : <ChevronDown size={14} className="text-muted-foreground flex-shrink-0 mt-1" />}
       </button>
+      </div>
 
       {expanded && (
         <div className={`border-t px-5 py-5 space-y-5 ${config.border} ${config.bg}`}>
@@ -179,9 +197,11 @@ function IssueCard({ issue, index }: { issue: ReviewIssue; index: number }) {
   );
 }
 
-export function CodeReviewPanel({ review, prUrl, prToken }: CodeReviewPanelProps) {
+export function CodeReviewPanel({ review, prUrl, prToken, mrData }: CodeReviewPanelProps) {
   const [copied, setCopied] = useState(false);
   const [posting, setPosting] = useState(false);
+  const [postingSelected, setPostingSelected] = useState(false);
+  const [selectedIssues, setSelectedIssues] = useState<Set<string>>(new Set());
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [groupBy, setGroupBy] = useState<"severity" | "file">("severity");
   const verdictConfig = VERDICT_CONFIG[review.overallVerdict] ?? DEFAULT_VERDICT;
@@ -338,6 +358,58 @@ export function CodeReviewPanel({ review, prUrl, prToken }: CodeReviewPanelProps
     setTimeout(() => setCopied(false), 2500);
   };
 
+  // ─── Selection helpers ──────────────────────────────────────────────
+  const toggleIssueSelection = (id: string) => {
+    setSelectedIssues((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    setSelectedIssues(new Set(filteredIssues.map((i) => i.id)));
+  };
+
+  const deselectAll = () => {
+    setSelectedIssues(new Set());
+  };
+
+  const selectedCount = selectedIssues.size;
+  const allVisibleSelected = filteredIssues.length > 0 && filteredIssues.every((i) => selectedIssues.has(i.id));
+
+  const handlePostSelected = async () => {
+    if (!prUrl || !prToken || selectedCount === 0) return;
+    const selectedList = review.issues.filter((i) => selectedIssues.has(i.id));
+    if (!confirm(`Post ${selectedList.length} issue${selectedList.length !== 1 ? "s" : ""} as comments on the ${mrData?.platform === "gitlab" ? "MR" : "PR"}?`)) return;
+
+    setPostingSelected(true);
+    try {
+      const result = await postInlineComments({
+        url: prUrl,
+        token: prToken,
+        issues: selectedList,
+        diffRefs: mrData?.diffRefs,
+      });
+
+      const parts: string[] = [];
+      if (result.inline > 0) parts.push(`${result.inline} inline`);
+      if (result.general > 0) parts.push(`${result.general} general`);
+      if (result.failed > 0) parts.push(`${result.failed} failed`);
+
+      if (result.failed === 0) {
+        toast.success(`Posted ${result.total} comment${result.total !== 1 ? "s" : ""}: ${parts.join(", ")}`);
+        deselectAll();
+      } else {
+        toast.error(`${parts.join(", ")}. Errors: ${result.errors.slice(0, 2).join("; ")}`);
+      }
+    } catch (err) {
+      toast.error(`Failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setPostingSelected(false);
+    }
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
@@ -455,7 +527,24 @@ export function CodeReviewPanel({ review, prUrl, prToken }: CodeReviewPanelProps
               Issues & Suggestions
               <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{filteredIssues.length}{activeFilters.size > 0 ? `/${review.issues.length}` : ""}</span>
             </h3>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Selection controls */}
+              {prUrl && prToken && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={allVisibleSelected ? deselectAll : selectAllVisible}
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-lg border border-border bg-secondary hover:bg-card"
+                  >
+                    <ListChecks size={12} />
+                    {allVisibleSelected ? "Deselect All" : "Select All"}
+                  </button>
+                  {selectedCount > 0 && (
+                    <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                      {selectedCount} selected
+                    </span>
+                  )}
+                </div>
+              )}
               {/* Severity filters */}
               <div className="flex gap-1">
                 {[
@@ -508,7 +597,13 @@ export function CodeReviewPanel({ review, prUrl, prToken }: CodeReviewPanelProps
           {groupBy === "severity" ? (
             <div className="space-y-3">
               {sortedIssues.map((issue, i) => (
-                <IssueCard key={issue.id} issue={issue} index={i} />
+                <IssueCard
+                  key={issue.id}
+                  issue={issue}
+                  index={i}
+                  selected={selectedIssues.has(issue.id)}
+                  onToggleSelect={prUrl && prToken ? () => toggleIssueSelection(issue.id) : undefined}
+                />
               ))}
             </div>
           ) : (
@@ -527,12 +622,52 @@ export function CodeReviewPanel({ review, prUrl, prToken }: CodeReviewPanelProps
                   </div>
                   <div className="space-y-3">
                     {issues.map((issue, i) => (
-                      <IssueCard key={issue.id} issue={issue} index={i} />
+                      <IssueCard
+                        key={issue.id}
+                        issue={issue}
+                        index={i}
+                        selected={selectedIssues.has(issue.id)}
+                        onToggleSelect={prUrl && prToken ? () => toggleIssueSelection(issue.id) : undefined}
+                      />
                     ))}
                   </div>
                 </div>
               ))}
             </div>
+          )}
+
+          {/* Post Selected floating bar */}
+          {selectedCount > 0 && prUrl && prToken && (
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="sticky bottom-4 mt-4 flex items-center justify-between gap-3 p-3 rounded-2xl bg-card border border-primary/20 shadow-lg"
+            >
+              <div className="flex items-center gap-2 text-sm">
+                <ListChecks size={16} className="text-primary" />
+                <span className="font-medium text-foreground">{selectedCount} issue{selectedCount !== 1 ? "s" : ""} selected</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={deselectAll}
+                  className="text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg border border-border transition-colors"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={handlePostSelected}
+                  disabled={postingSelected}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-background bg-primary hover:bg-primary/90 px-4 py-2 rounded-xl transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {postingSelected ? (
+                    <span className="w-3 h-3 border-2 border-background/30 border-t-background rounded-full animate-spin" />
+                  ) : (
+                    <Send size={13} />
+                  )}
+                  {postingSelected ? "Posting..." : `Post ${selectedCount} to ${mrData?.platform === "gitlab" ? "MR" : "PR"}`}
+                </button>
+              </div>
+            </motion.div>
           )}
         </div>
       )}

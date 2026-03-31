@@ -288,7 +288,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
           <FlowSkeleton />
         )}
         {activeTab === "review" && codeReview && (
-          <CodeReviewPanel review={codeReview} prUrl={prUrl} prToken={prToken} />
+          <CodeReviewPanel review={codeReview} prUrl={prUrl} prToken={prToken} mrData={mrData} />
         )}
         {activeTab === "review" && !codeReview && !reviewLoading && (
           <motion.div

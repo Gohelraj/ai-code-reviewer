@@ -158,6 +158,11 @@ async function fetchGitLabMR(url: string, token?: string): Promise<MRData> {
   return {
     platform: "gitlab",
     pr: prInfo,
+    diffRefs: mr.diff_refs ? {
+      baseSha: mr.diff_refs.base_sha,
+      headSha: mr.diff_refs.head_sha,
+      startSha: mr.diff_refs.start_sha,
+    } : undefined,
     files: await Promise.all(changes.map(async (c, i) => {
       const additions = c.additions ?? (c.diff ? parseDiffStats(c.diff).additions : 0);
       const deletions = c.deletions ?? (c.diff ? parseDiffStats(c.diff).deletions : 0);
