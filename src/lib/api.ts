@@ -1,4 +1,4 @@
-import type { MRData, ChangeSummary, ExecutionFlow, CodeReview, FileDiff, PRInfo } from "../types";
+import type { MRData, ChangeSummary, ExecutionFlow, CodeReview, RequirementsCheck, MRDescriptionReview, FileDiff, PRInfo } from "../types";
 import type { AIConfig } from "../components/AISettings";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -529,4 +529,209 @@ Perform a comprehensive senior-level code review using the full file context abo
   }
 
   return review;
+}
+
+// ─── Issue fetching ──────────────────────────────────────────────────────────
+
+export interface IssueData {
+  title: string;
+  description: string;
+  labels: string[];
+  url: string;
+}
+
+function parseGitLabIssueUrl(url: string): { projectPath: string; issueIid: string } | null {
+  const match = url.match(/gitlab\.com\/(.+?)\/-\/(?:issues|work_items)\/(\d+)/);
+  if (match) return { projectPath: match[1], issueIid: match[2] };
+  return null;
+}
+
+function parseGitHubIssueUrl(url: string): { owner: string; repo: string; number: string } | null {
+  const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/);
+  if (match) return { owner: match[1], repo: match[2], number: match[3] };
+  return null;
+}
+
+export async function fetchIssueData(url: string, token?: string): Promise<IssueData> {
+  const gitlab = parseGitLabIssueUrl(url);
+  if (gitlab) {
+    const encodedPath = encodeURIComponent(gitlab.projectPath);
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["PRIVATE-TOKEN"] = token;
+
+    const res = await fetch(`/api/gitlab/api/v4/projects/${encodedPath}/issues/${gitlab.issueIid}`, { headers });
+    if (!res.ok) throw new Error(`GitLab issue fetch failed: ${res.status}`);
+    const data = await res.json();
+    return {
+      title: data.title,
+      description: data.description ?? "",
+      labels: data.labels ?? [],
+      url,
+    };
+  }
+
+  const github = parseGitHubIssueUrl(url);
+  if (github) {
+    const headers: Record<string, string> = {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const res = await fetch(`https://api.github.com/repos/${github.owner}/${github.repo}/issues/${github.number}`, { headers });
+    if (!res.ok) throw new Error(`GitHub issue fetch failed: ${res.status}`);
+    const data = await res.json();
+    return {
+      title: data.title,
+      description: data.body ?? "",
+      labels: (data.labels ?? []).map((l: { name: string }) => l.name),
+      url,
+    };
+  }
+
+  throw new Error("Invalid issue URL. Provide a GitHub or GitLab issue link.");
+}
+
+// ─── Requirements check ─────────────────────────────────────────────────────
+
+const REQUIREMENTS_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    issueTitle: { type: "string" },
+    issueSummary: { type: "string" },
+    overallCoverage: { type: "string", enum: ["fully_covered", "mostly_covered", "partially_covered", "poorly_covered"] },
+    coverageScore: { type: "number" },
+    requirements: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          requirement: { type: "string" },
+          status: { type: "string", enum: ["fulfilled", "partially_fulfilled", "not_fulfilled", "not_applicable"] },
+          evidence: { type: "string" },
+          notes: { type: "string" },
+        },
+        required: ["requirement", "status", "evidence", "notes"],
+        additionalProperties: false,
+      },
+    },
+    missingItems: { type: "array", items: { type: "string" } },
+    suggestions: { type: "array", items: { type: "string" } },
+  },
+  required: ["issueTitle", "issueSummary", "overallCoverage", "coverageScore", "requirements", "missingItems", "suggestions"],
+  additionalProperties: false,
+};
+
+export async function analyzeRequirements(
+  mrData: MRData,
+  issue: IssueData,
+  aiConfig: AIConfig
+): Promise<RequirementsCheck> {
+  if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required.");
+
+  const diffContent = buildDiffContent(mrData.files);
+
+  const systemPrompt = `You are a senior QA engineer and project manager. Your task is to compare a merge request against the linked issue/task requirements and determine if ALL requirements are fulfilled by the code changes.
+
+Extract every requirement, acceptance criterion, and deliverable from the issue description. For each one, check the code diff to determine if it's been implemented.
+
+Be thorough: check edge cases, error handling, UI requirements, API contracts, and testing requirements mentioned in the issue.
+coverageScore must be a number between 0 and 100.
+Always return valid JSON.`;
+
+  const userPrompt = `ISSUE TITLE: ${issue.title}
+ISSUE DESCRIPTION:
+${issue.description || "No description"}
+ISSUE LABELS: ${issue.labels.join(", ") || "None"}
+
+MR TITLE: ${mrData.pr.title}
+MR DESCRIPTION: ${mrData.pr.description || "No description"}
+Branch: ${mrData.pr.headBranch} → ${mrData.pr.baseBranch}
+Stats: ${mrData.pr.changedFiles} files changed, +${mrData.pr.additions}/-${mrData.pr.deletions}
+
+FILE DIFFS:
+${diffContent}
+
+Extract ALL requirements from the issue and check each one against the code changes. Be specific about what evidence you found (or didn't find) in the diff.`;
+
+  const result = await callOpenRouter<RequirementsCheck>(aiConfig.apiKey, aiConfig.model, [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt },
+  ], REQUIREMENTS_SCHEMA);
+
+  if (result.coverageScore > 100) result.coverageScore = 100;
+  return result;
+}
+
+// ─── MR description review ──────────────────────────────────────────────────
+
+const MR_DESCRIPTION_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    currentQuality: { type: "string", enum: ["excellent", "good", "needs_improvement", "poor"] },
+    qualityScore: { type: "number" },
+    strengths: { type: "array", items: { type: "string" } },
+    suggestions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          category: { type: "string" },
+          suggestion: { type: "string" },
+          priority: { type: "string", enum: ["high", "medium", "low"] },
+          example: { type: "string" },
+        },
+        required: ["category", "suggestion", "priority", "example"],
+        additionalProperties: false,
+      },
+    },
+    suggestedDescription: { type: "string" },
+  },
+  required: ["currentQuality", "qualityScore", "strengths", "suggestions", "suggestedDescription"],
+  additionalProperties: false,
+};
+
+export async function analyzeMRDescription(
+  mrData: MRData,
+  aiConfig: AIConfig,
+  issue?: IssueData | null
+): Promise<MRDescriptionReview> {
+  if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required.");
+
+  const diffContent = buildDiffContent(mrData.files);
+
+  const systemPrompt = `You are a senior engineering manager reviewing a merge request description. Evaluate the MR description quality and suggest improvements.
+
+A good MR description should include:
+- Clear summary of what changed and why
+- Link to related issue/ticket (if applicable)
+- How to test the changes
+- Screenshots/recordings for UI changes
+- Breaking changes or migration steps
+- Checklist of completed items
+- Impact on other systems/services
+
+qualityScore must be a number between 0 and 100.
+For suggestedDescription, write a complete improved MR description in markdown that the author could copy-paste.
+Always return valid JSON.`;
+
+  const userPrompt = `MR TITLE: ${mrData.pr.title}
+MR DESCRIPTION:
+${mrData.pr.description || "(empty — no description provided)"}
+Author: ${mrData.pr.author}
+Branch: ${mrData.pr.headBranch} → ${mrData.pr.baseBranch}
+Stats: ${mrData.pr.changedFiles} files changed, +${mrData.pr.additions}/-${mrData.pr.deletions}, ${mrData.pr.commits} commit(s)
+${issue ? `\nLINKED ISSUE: ${issue.title}\n${issue.description}\n` : ""}
+FILE DIFFS (so you know what changed):
+${diffContent}
+
+Review the MR description and suggest what should be added or improved. Generate a complete improved description.`;
+
+  const result = await callOpenRouter<MRDescriptionReview>(aiConfig.apiKey, aiConfig.model, [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt },
+  ], MR_DESCRIPTION_SCHEMA);
+
+  if (result.qualityScore > 100) result.qualityScore = 100;
+  return result;
 }

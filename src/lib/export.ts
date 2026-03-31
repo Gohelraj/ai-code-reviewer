@@ -1,7 +1,7 @@
 import type { AnalysisState } from "../types";
 
 export function exportAsMarkdown(state: AnalysisState): string {
-  const { mrData, summary, executionFlow, codeReview } = state;
+  const { mrData, summary, executionFlow, codeReview, reviewerNotes } = state;
   const lines: string[] = [];
 
   if (mrData) {
@@ -12,6 +12,13 @@ export function exportAsMarkdown(state: AnalysisState): string {
     lines.push(`**Branch:** ${mrData.pr.headBranch} → ${mrData.pr.baseBranch}`);
     lines.push(`**Stats:** ${mrData.pr.changedFiles} files, +${mrData.pr.additions}/-${mrData.pr.deletions}, ${mrData.pr.commits} commit(s)`);
     lines.push(`**URL:** ${mrData.pr.url}`);
+    lines.push(``);
+  }
+
+  if (reviewerNotes?.trim()) {
+    lines.push(`## Reviewer Notes`);
+    lines.push(``);
+    lines.push(reviewerNotes.trim());
     lines.push(``);
   }
 
@@ -157,6 +164,21 @@ export function exportAsMarkdown(state: AnalysisState): string {
 
 export function downloadMarkdown(content: string, filename: string) {
   const blob = new Blob([content], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export function exportAsJSON(state: AnalysisState): string {
+  const { mrData, summary, executionFlow, codeReview, requirementsCheck, mrDescriptionReview, reviewerNotes } = state;
+  return JSON.stringify({ mrData, summary, executionFlow, codeReview, requirementsCheck, mrDescriptionReview, reviewerNotes }, null, 2);
+}
+
+export function downloadJSON(content: string, filename: string) {
+  const blob = new Blob([content], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

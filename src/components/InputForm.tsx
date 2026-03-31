@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { GitPullRequest, Key, ChevronDown, ChevronUp, Sparkles, GitBranch, ArrowRight, Shield, FileText, Search, Layers, Clock, Trash2 } from "lucide-react";
+import { GitPullRequest, Key, ChevronDown, ChevronUp, Sparkles, GitBranch, ArrowRight, Shield, FileText, Search, Layers, Clock, Trash2, ListChecks } from "lucide-react";
 import { AISettings, loadAIConfig } from "./AISettings";
 import type { AIConfig } from "./AISettings";
 import { ThemeToggle } from "./ThemeToggle";
@@ -12,6 +12,7 @@ export interface SubmitPayload {
   url: string;
   token?: string;
   aiConfig: AIConfig;
+  issueUrl?: string;
 }
 
 interface InputFormProps {
@@ -32,6 +33,7 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [showToken, setShowToken] = useState(false);
+  const [issueUrl, setIssueUrl] = useState("");
   const [aiConfig, setAiConfig] = useState<AIConfig>(loadAIConfig);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
 
@@ -42,7 +44,7 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!url.trim()) return;
-    onSubmit({ url: url.trim(), token: token.trim() || undefined, aiConfig });
+    onSubmit({ url: url.trim(), token: token.trim() || undefined, aiConfig, issueUrl: issueUrl.trim() || undefined });
   };
 
   const isValidUrl = url.includes("github.com") || url.includes("gitlab.com");
@@ -166,6 +168,30 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
 
               {/* AI Settings */}
               <AISettings config={aiConfig} onChange={setAiConfig} disabled={isLoading} />
+
+              {/* Linked Issue (optional — always visible) */}
+              <div>
+                <label className="text-sm font-medium text-foreground mb-1.5 block flex items-center gap-1.5">
+                  <ListChecks size={14} className="text-muted-foreground" />
+                  Linked Issue
+                  <span className="text-xs text-muted-foreground font-normal">(optional)</span>
+                </label>
+                <div className="relative">
+                  <ListChecks size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="url"
+                    value={issueUrl}
+                    onChange={(e) => setIssueUrl(e.target.value)}
+                    placeholder="https://gitlab.com/group/project/-/issues/123"
+                    className="w-full pl-10 pr-4 py-2.5 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all placeholder:text-muted-foreground/60 text-foreground"
+                    disabled={isLoading}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+                  Paste a GitHub issue or GitLab issue/work item URL. AI will cross-check if the MR fulfills all requirements.
+                  Requirements check and MR description review are run on-demand to save API costs.
+                </p>
+              </div>
 
               <button
                 type="submit"

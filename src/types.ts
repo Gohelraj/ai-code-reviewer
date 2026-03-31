@@ -112,6 +112,38 @@ export interface CodeReview {
 
 export type AnalysisStep = "idle" | "fetching" | "summarizing" | "flowing" | "reviewing" | "done" | "error";
 
+export interface RequirementItem {
+  requirement: string;
+  status: "fulfilled" | "partially_fulfilled" | "not_fulfilled" | "not_applicable";
+  evidence: string;
+  notes: string;
+}
+
+export interface RequirementsCheck {
+  issueTitle: string;
+  issueSummary: string;
+  overallCoverage: "fully_covered" | "mostly_covered" | "partially_covered" | "poorly_covered";
+  coverageScore: number;
+  requirements: RequirementItem[];
+  missingItems: string[];
+  suggestions: string[];
+}
+
+export interface MRDescriptionSuggestion {
+  category: string;
+  suggestion: string;
+  priority: "high" | "medium" | "low";
+  example: string;
+}
+
+export interface MRDescriptionReview {
+  currentQuality: "excellent" | "good" | "needs_improvement" | "poor";
+  qualityScore: number;
+  strengths: string[];
+  suggestions: MRDescriptionSuggestion[];
+  suggestedDescription: string;
+}
+
 export interface AnalysisState {
   step: AnalysisStep;
   mrData: MRData | null;
@@ -119,9 +151,15 @@ export interface AnalysisState {
   executionFlow: ExecutionFlow | null;
   codeReview: CodeReview | null;
   error: string | null;
-  activeTab: "summary" | "flow" | "review";
+  activeTab: "summary" | "flow" | "review" | "requirements" | "mr-description";
   /** Free-text reviewer notes stored per MR */
   reviewerNotes?: string;
   /** Previous code review for comparison after re-review */
   previousReview?: CodeReview | null;
+  /** Requirements check from linked issue */
+  requirementsCheck?: RequirementsCheck | null;
+  /** MR description review */
+  mrDescriptionReview?: MRDescriptionReview | null;
+  /** Linked GitLab/GitHub issue URL */
+  linkedIssueUrl?: string;
 }
