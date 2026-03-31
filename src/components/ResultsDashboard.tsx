@@ -1,6 +1,6 @@
-import { useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { GitPullRequest, FileText, GitBranch, Search, ArrowLeft, ExternalLink, Cpu, Play, Plus, Minus, Download, Printer } from "lucide-react";
+import { GitPullRequest, FileText, GitBranch, Search, ArrowLeft, ExternalLink, Cpu, Play, Plus, Minus, Download, Printer, StickyNote, ChevronDown, ChevronUp, FolderTree } from "lucide-react";
 import type { AnalysisState } from "../types";
 import { ChangeSummaryPanel } from "./ChangeSummaryPanel";
 import { ExecutionFlowPanel } from "./ExecutionFlowPanel";
@@ -11,6 +11,7 @@ import { OPENROUTER_MODELS } from "./AISettings";
 import { ThemeToggle } from "./ThemeToggle";
 import { exportAsMarkdown, downloadMarkdown } from "../lib/export";
 import { estimateCost, formatCost } from "../lib/cost";
+import { FileTreeSidebar } from "./FileTreeSidebar";
 
 interface ResultsDashboardProps {
   state: AnalysisState;
@@ -23,6 +24,7 @@ interface ResultsDashboardProps {
   onTriggerReview: () => void;
   prUrl?: string;
   prToken?: string;
+  onNotesChange?: (notes: string) => void;
 }
 
 const TABS = [
@@ -31,8 +33,12 @@ const TABS = [
   { id: "review" as const, label: "Code Review", icon: Search, description: "Senior engineer insights" },
 ];
 
-export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, onTriggerReview, prUrl, prToken }: ResultsDashboardProps) {
+export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, onTriggerReview, prUrl, prToken, onNotesChange }: ResultsDashboardProps) {
   const { mrData, summary, executionFlow, codeReview, activeTab } = state;
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [notesValue, setNotesValue] = useState(state.reviewerNotes ?? "");
+  const notesTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const [fileTreeOpen, setFileTreeOpen] = useState(false);
   const modelLabel = aiConfig?.provider === "openrouter" && aiConfig.apiKey
     ? OPENROUTER_MODELS.find((m) => m.id === aiConfig.model)?.label ?? aiConfig.model
     : null;
@@ -112,6 +118,16 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
               </div>
             )}
             <ThemeToggle theme={theme} onThemeChange={onThemeChange} />
+            <button
+              onClick={() => setFileTreeOpen(!fileTreeOpen)}
+              className={`flex items-center gap-1.5 text-xs transition-colors px-2 py-1.5 rounded-lg border bg-secondary hover:bg-card flex-shrink-0 ${
+                fileTreeOpen ? "text-foreground border-foreground/30" : "text-muted-foreground hover:text-foreground border-border"
+              }`}
+              title="Toggle file tree"
+            >
+              <FolderTree size={12} />
+              <span className="hidden sm:block">Files</span>
+            </button>
             {(summary || codeReview) && (
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button
@@ -273,8 +289,62 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
         </div>
       </div>
 
-      {/* Content */}
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
+      {/* Reviewer Notes */}
+      <div className="border-b border-border">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6">
+          <button
+            onClick={() => setNotesOpen(!notesOpen)}
+            className="flex items-center gap-2 w-full py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <StickyNote size={12} />
+            <span className="font-medium">Reviewer Notes</span>
+            {notesValue.trim() && !notesOpen && (
+              <span className="text-muted-foreground/60 truncate max-w-[200px]">— {notesValue.trim().slice(0, 50)}{notesValue.trim().length > 50 ? "..." : ""}</span>
+            )}
+            {notesOpen ? <ChevronUp size={12} className="ml-auto" /> : <ChevronDown size={12} className="ml-auto" />}
+          </button>
+          {notesOpen && (
+            <div className="pb-3">
+              <textarea
+                value={notesValue}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setNotesValue(val);
+                  // Debounce save
+                  clearTimeout(notesTimerRef.current);
+                  notesTimerRef.current = setTimeout(() => {
+                    onNotesChange?.(val);
+                  }, 500);
+                }}
+                placeholder="Add your review notes here... These are saved with the MR history."
+                rows={3}
+                className="w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all placeholder:text-muted-foreground/50 text-foreground resize-y"
+              />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Content with optional sidebar */}
+      <div className="flex flex-1 overflow-hidden">
+        <FileTreeSidebar
+          files={mrData.files}
+          codeReview={codeReview}
+          open={fileTreeOpen}
+          onClose={() => setFileTreeOpen(false)}
+          onFileClick={(filename) => {
+            // Switch to review tab with file filter if code review exists
+            if (codeReview) {
+              onTabChange("review");
+            }
+            // Scroll to first matching element (best-effort)
+            setTimeout(() => {
+              const el = document.querySelector(`[title="${filename}"]`);
+              el?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }, 100);
+          }}
+        />
+        <main className="flex-1 min-w-0 max-w-5xl mx-auto px-4 sm:px-6 py-6">
         {activeTab === "summary" && summary && (
           <ChangeSummaryPanel summary={summary} mrData={mrData} />
         )}
@@ -288,7 +358,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
           <FlowSkeleton />
         )}
         {activeTab === "review" && codeReview && (
-          <CodeReviewPanel review={codeReview} prUrl={prUrl} prToken={prToken} mrData={mrData} />
+          <CodeReviewPanel review={codeReview} prUrl={prUrl} prToken={prToken} mrData={mrData} previousReview={state.previousReview} reviewLoading={reviewLoading} onTriggerReview={onTriggerReview} />
         )}
         {activeTab === "review" && !codeReview && !reviewLoading && (
           <motion.div
@@ -344,6 +414,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
           </div>
         )}
       </main>
+      </div>
     </div>
   );
 }

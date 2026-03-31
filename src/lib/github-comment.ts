@@ -70,8 +70,8 @@ function buildIssueMarkdown(issue: ReviewIssue): string {
     lines.push(`> **Impact:** ${issue.impact}`);
   }
 
-  lines.push("");
-  lines.push("*— AI Code Reviewer*");
+//   lines.push("");
+//   lines.push("*— AI Code Reviewer*");
   return lines.join("\n");
 }
 

@@ -7,6 +7,7 @@ export interface AIConfig {
   provider: "openrouter";
   apiKey: string;
   model: string;
+  customRules?: string;
 }
 
 export const OPENROUTER_MODELS = [
@@ -39,6 +40,7 @@ const DEFAULT_CONFIG: AIConfig = {
   provider: "openrouter",
   apiKey: "",
   model: "anthropic/claude-sonnet-4-6",
+  customRules: "",
 };
 
 // Persist to localStorage
@@ -187,6 +189,22 @@ export function AISettings({ config, onChange, disabled }: AISettingsProps) {
                     </select>
                     <p className="text-xs text-muted-foreground mt-1">
                       Models marked ★ are recommended for code review quality.
+                    </p>
+                  </div>
+
+                  {/* Custom review rules */}
+                  <div>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Custom Review Rules (optional)</p>
+                    <textarea
+                      value={config.customRules ?? ""}
+                      onChange={(e) => onChange({ ...config, customRules: e.target.value })}
+                      placeholder="e.g. Always flag console.log statements as warnings. Pay extra attention to SQL injection. Our team uses camelCase for variables and PascalCase for components."
+                      disabled={disabled}
+                      rows={3}
+                      className="w-full px-3 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all placeholder:text-muted-foreground/50 text-foreground resize-y"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Add team-specific rules or focus areas. These are injected into the review prompt.
                     </p>
                   </div>
 

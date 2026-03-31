@@ -497,7 +497,11 @@ Use the full file content (when present) to catch issues that only appear in con
 
 Be precise: always provide the exact file path and line reference when flagging an issue.
 IMPORTANT: overallScore must be a decimal between 0.0 and 10.0 (e.g. 6.5, not 65).
-Always return valid JSON. For optional string fields (file, lineHint, currentCode, impact) always provide a string value (use "" if not applicable).`;
+Always return valid JSON. For optional string fields (file, lineHint, currentCode, impact) always provide a string value (use "" if not applicable).${
+  aiConfig.customRules?.trim()
+    ? `\n\nADDITIONAL REVIEWER RULES (from the team — follow these strictly):\n${aiConfig.customRules.trim()}`
+    : ""
+}`;
 
   const userPrompt = `PR Title: ${pr.title}
 PR Description: ${pr.description || "No description"}

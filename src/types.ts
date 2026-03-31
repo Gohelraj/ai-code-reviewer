@@ -120,4 +120,8 @@ export interface AnalysisState {
   codeReview: CodeReview | null;
   error: string | null;
   activeTab: "summary" | "flow" | "review";
+  /** Free-text reviewer notes stored per MR */
+  reviewerNotes?: string;
+  /** Previous code review for comparison after re-review */
+  previousReview?: CodeReview | null;
 }

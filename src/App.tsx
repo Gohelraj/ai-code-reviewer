@@ -95,9 +95,27 @@ function App() {
     updateState({ activeTab: tab });
   }, [updateState]);
 
+  const handleNotesChange = useCallback((notes: string) => {
+    updateState({ reviewerNotes: notes });
+    // Re-save to history
+    setState((prev) => {
+      const updated = { ...prev, reviewerNotes: notes };
+      if (analysisUrl && activeAIConfig) {
+        saveAnalysis(analysisUrl, updated, activeAIConfig);
+      }
+      return updated;
+    });
+  }, [updateState, analysisUrl, activeAIConfig]);
+
   const handleTriggerReview = useCallback(async () => {
     if (!state.mrData || !activeAIConfig || reviewLoading) return;
     setReviewLoading(true);
+
+    // Stash current review as "previous" for comparison
+    if (state.codeReview) {
+      updateState({ previousReview: state.codeReview });
+    }
+
     try {
       const codeReview = await analyzeCodeReview(state.mrData, activeAIConfig);
       updateState({ codeReview, activeTab: "review" });
@@ -140,6 +158,7 @@ function App() {
           onTriggerReview={handleTriggerReview}
           prUrl={analysisUrl}
           prToken={analysisToken}
+          onNotesChange={handleNotesChange}
         />
       );
     }
@@ -170,6 +189,7 @@ function App() {
       onTriggerReview={handleTriggerReview}
       prUrl={analysisUrl}
       prToken={analysisToken}
+      onNotesChange={handleNotesChange}
     />
   );
 }

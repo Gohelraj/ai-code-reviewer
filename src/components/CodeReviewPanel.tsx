@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import {
   Shield, Zap, CheckCircle2, XCircle, AlertTriangle, MessageSquare,
   ChevronDown, ChevronUp, Copy, Check, Star, BookOpen, Lock, Gauge, Send, FileCode, MapPin,
-  Square, CheckSquare, ListChecks
+  Square, CheckSquare, ListChecks, EyeOff, Eye, ClipboardCopy, Play, RefreshCw
 } from "lucide-react";
 import toast from "react-hot-toast";
 import type { CodeReview, ReviewIssue, MRData } from "../types";
@@ -14,6 +14,9 @@ interface CodeReviewPanelProps {
   prUrl?: string;
   prToken?: string;
   mrData?: MRData | null;
+  previousReview?: CodeReview | null;
+  reviewLoading?: boolean;
+  onTriggerReview?: () => void;
 }
 
 type SeverityConfigEntry = { icon: typeof XCircle; label: string; bg: string; border: string; text: string; badge: string };
@@ -92,18 +95,64 @@ function CodeBlock({ code, label, variant = "neutral" }: { code: string; label: 
   );
 }
 
-function IssueCard({ issue, index, selected, onToggleSelect }: { issue: ReviewIssue; index: number; selected?: boolean; onToggleSelect?: () => void }) {
-  const [expanded, setExpanded] = useState(issue.severity === "critical");
+/** Build markdown for a single issue */
+function buildSingleIssueMarkdown(issue: ReviewIssue): string {
+  const sevEmoji = issue.severity === "critical" ? "🔴" : issue.severity === "warning" ? "🟡" : "🔵";
+  const lines: string[] = [];
+  lines.push(`#### ${sevEmoji} [${issue.severity.toUpperCase()}] ${issue.title}`);
+  lines.push(``);
+  if (issue.file) {
+    lines.push(`📁 \`${issue.file}\`${issue.lineHint ? ` · ${issue.lineHint}` : ""}`);
+    lines.push(``);
+  }
+  if (issue.category) {
+    lines.push(`**Category:** ${issue.category}`);
+    lines.push(``);
+  }
+  lines.push(issue.description);
+  lines.push(``);
+  if (issue.currentCode) {
+    lines.push(`**Problematic Code:**`);
+    lines.push("```");
+    lines.push(issue.currentCode.trim());
+    lines.push("```");
+    lines.push(``);
+  }
+  if (issue.suggestedFix) {
+    lines.push(`**Suggested Fix:**`);
+    lines.push("```");
+    lines.push(issue.suggestedFix.trim());
+    lines.push("```");
+    lines.push(``);
+  }
+  if (issue.impact) {
+    lines.push(`> **Impact:** ${issue.impact}`);
+    lines.push(``);
+  }
+  return lines.join("\n");
+}
+
+function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismiss, onRestore }: {
+  issue: ReviewIssue;
+  index: number;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+  dismissed?: boolean;
+  onDismiss?: () => void;
+  onRestore?: () => void;
+}) {
+  const [expanded, setExpanded] = useState(issue.severity === "critical" && !dismissed);
+  const [issueCopied, setIssueCopied] = useState(false);
   const config = SEVERITY_CONFIG[issue.severity] ?? DEFAULT_SEVERITY;
   const Icon = config.icon;
-  const showCheckbox = onToggleSelect !== undefined;
+  const showCheckbox = onToggleSelect !== undefined && !dismissed;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04, duration: 0.3 }}
-      className={`border rounded-2xl overflow-hidden ${config.border} bg-card ${issue.severity === "critical" ? "border-l-4 border-l-destructive" : ""} ${selected ? "ring-2 ring-primary/30" : ""}`}
+      className={`border rounded-2xl overflow-hidden ${config.border} bg-card ${issue.severity === "critical" && !dismissed ? "border-l-4 border-l-destructive" : ""} ${selected ? "ring-2 ring-primary/30" : ""} ${dismissed ? "opacity-50" : ""}`}
     >
       <div className="flex items-start">
         {showCheckbox && (
@@ -132,6 +181,11 @@ function IssueCard({ issue, index, selected, onToggleSelect }: { issue: ReviewIs
             <span className="text-xs text-muted-foreground px-2 py-0.5 rounded-md bg-secondary border border-border">
               {issue.category}
             </span>
+            {dismissed && (
+              <span className="text-xs font-medium text-muted-foreground px-2 py-0.5 rounded-md bg-muted border border-border line-through">
+                Dismissed
+              </span>
+            )}
           </div>
           <p className="text-sm font-semibold text-foreground leading-snug">{issue.title}</p>
           {(issue.file || issue.lineHint) && (
@@ -191,17 +245,55 @@ function IssueCard({ issue, index, selected, onToggleSelect }: { issue: ReviewIs
               <p className="text-sm text-foreground leading-relaxed">{issue.impact}</p>
             </div>
           )}
+
+          {/* Issue actions */}
+          <div className="flex items-center gap-2 pt-2 border-t border-border/50">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const md = buildSingleIssueMarkdown(issue);
+                navigator.clipboard.writeText(md);
+                setIssueCopied(true);
+                toast.success("Issue copied as markdown");
+                setTimeout(() => setIssueCopied(false), 2000);
+              }}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-md hover:bg-secondary"
+            >
+              {issueCopied ? <Check size={11} className="text-accent" /> : <ClipboardCopy size={11} />}
+              {issueCopied ? "Copied!" : "Copy as MD"}
+            </button>
+            {dismissed && onRestore && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onRestore(); }}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-md hover:bg-secondary"
+              >
+                <Eye size={11} />
+                Restore
+              </button>
+            )}
+            {!dismissed && onDismiss && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onDismiss(); }}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors px-2 py-1 rounded-md hover:bg-destructive/10 ml-auto"
+              >
+                <EyeOff size={11} />
+                Dismiss
+              </button>
+            )}
+          </div>
         </div>
       )}
     </motion.div>
   );
 }
 
-export function CodeReviewPanel({ review, prUrl, prToken, mrData }: CodeReviewPanelProps) {
+export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview, reviewLoading, onTriggerReview }: CodeReviewPanelProps) {
   const [copied, setCopied] = useState(false);
   const [posting, setPosting] = useState(false);
   const [postingSelected, setPostingSelected] = useState(false);
   const [selectedIssues, setSelectedIssues] = useState<Set<string>>(new Set());
+  const [dismissedIssues, setDismissedIssues] = useState<Set<string>>(new Set());
+  const [showDismissed, setShowDismissed] = useState(false);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [groupBy, setGroupBy] = useState<"severity" | "file">("severity");
   const verdictConfig = VERDICT_CONFIG[review.overallVerdict] ?? DEFAULT_VERDICT;
@@ -220,8 +312,8 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData }: CodeReviewPa
   };
 
   const filteredIssues = activeFilters.size === 0
-    ? review.issues
-    : review.issues.filter((i) => activeFilters.has(i.severity));
+    ? review.issues.filter((i) => showDismissed || !dismissedIssues.has(i.id))
+    : review.issues.filter((i) => activeFilters.has(i.severity) && (showDismissed || !dismissedIssues.has(i.id)));
 
   const sortedIssues = [...filteredIssues].sort((a, b) => {
     const order: Record<string, number> = { critical: 0, warning: 1, suggestion: 2, nitpick: 3 };
@@ -378,6 +470,19 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData }: CodeReviewPa
   const selectedCount = selectedIssues.size;
   const allVisibleSelected = filteredIssues.length > 0 && filteredIssues.every((i) => selectedIssues.has(i.id));
 
+  // ─── Dismiss helpers ──────────────────────────────────────────────
+  const dismissIssue = (id: string) => {
+    setDismissedIssues((prev) => new Set(prev).add(id));
+    setSelectedIssues((prev) => { const next = new Set(prev); next.delete(id); return next; });
+    toast.success("Issue dismissed");
+  };
+
+  const restoreIssue = (id: string) => {
+    setDismissedIssues((prev) => { const next = new Set(prev); next.delete(id); return next; });
+  };
+
+  const dismissedCount = dismissedIssues.size;
+
   const handlePostSelected = async () => {
     if (!prUrl || !prToken || selectedCount === 0) return;
     const selectedList = review.issues.filter((i) => selectedIssues.has(i.id));
@@ -462,6 +567,20 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData }: CodeReviewPa
                 {copied ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
                 {copied ? "Copied!" : "Copy as MD"}
               </button>
+              {onTriggerReview && (
+                <button
+                  onClick={onTriggerReview}
+                  disabled={reviewLoading}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card disabled:opacity-50"
+                >
+                  {reviewLoading ? (
+                    <span className="w-3 h-3 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
+                  ) : (
+                    <Play size={12} />
+                  )}
+                  {reviewLoading ? "Reviewing..." : "Re-run"}
+                </button>
+              )}
             </div>
           </div>
 
@@ -489,6 +608,18 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData }: CodeReviewPa
               <p className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5">
                 <Star size={14} />
                 Code Quality Score
+                {previousReview && (
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ml-1 ${
+                    review.overallScore > previousReview.overallScore
+                      ? "bg-accent/10 text-accent"
+                      : review.overallScore < previousReview.overallScore
+                      ? "bg-destructive/10 text-destructive"
+                      : "bg-muted text-muted-foreground"
+                  }`}>
+                    {review.overallScore > previousReview.overallScore ? "↑" : review.overallScore < previousReview.overallScore ? "↓" : "="}{" "}
+                    prev: {previousReview.overallScore}/10
+                  </span>
+                )}
               </p>
               <p className="text-sm text-muted-foreground leading-relaxed">{review.executiveSummary}</p>
             </div>
@@ -591,6 +722,20 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData }: CodeReviewPa
                   File
                 </button>
               </div>
+              {/* Dismissed toggle */}
+              {dismissedCount > 0 && (
+                <button
+                  onClick={() => setShowDismissed(!showDismissed)}
+                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-all font-medium ${
+                    showDismissed
+                      ? "bg-muted text-foreground border-border"
+                      : "bg-muted/30 text-muted-foreground border-border"
+                  }`}
+                >
+                  {showDismissed ? <Eye size={11} /> : <EyeOff size={11} />}
+                  {dismissedCount} dismissed
+                </button>
+              )}
             </div>
           </div>
 
@@ -603,6 +748,9 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData }: CodeReviewPa
                   index={i}
                   selected={selectedIssues.has(issue.id)}
                   onToggleSelect={prUrl && prToken ? () => toggleIssueSelection(issue.id) : undefined}
+                  dismissed={dismissedIssues.has(issue.id)}
+                  onDismiss={() => dismissIssue(issue.id)}
+                  onRestore={() => restoreIssue(issue.id)}
                 />
               ))}
             </div>
@@ -628,6 +776,9 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData }: CodeReviewPa
                         index={i}
                         selected={selectedIssues.has(issue.id)}
                         onToggleSelect={prUrl && prToken ? () => toggleIssueSelection(issue.id) : undefined}
+                        dismissed={dismissedIssues.has(issue.id)}
+                        onDismiss={() => dismissIssue(issue.id)}
+                        onRestore={() => restoreIssue(issue.id)}
                       />
                     ))}
                   </div>
