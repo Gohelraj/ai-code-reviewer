@@ -8,6 +8,7 @@ import {
 import toast from "react-hot-toast";
 import type { CodeReview, ReviewIssue, MRData } from "../types";
 import { postReviewComment, postInlineComments, type InlinePostResult } from "../lib/github-comment";
+import ConfirmModal from "./ConfirmModal";
 
 interface CodeReviewPanelProps {
   review: CodeReview;
@@ -299,6 +300,7 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
   const canPost = !!prUrl && hasToken;
   const [dismissedIssues, setDismissedIssues] = useState<Set<string>>(new Set());
   const [showDismissed, setShowDismissed] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{ title: string; message: string; confirmLabel: string; onConfirm: () => void } | null>(null);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [groupBy, setGroupBy] = useState<"severity" | "file">("severity");
   const verdictConfig = VERDICT_CONFIG[review.overallVerdict] ?? DEFAULT_VERDICT;
@@ -488,11 +490,9 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
 
   const dismissedCount = dismissedIssues.size;
 
-  const handlePostSelected = async () => {
+  const doPostSelected = async () => {
     if (!prUrl || !effectiveToken || selectedCount === 0) return;
     const selectedList = review.issues.filter((i) => selectedIssues.has(i.id));
-    if (!confirm(`Post ${selectedList.length} issue${selectedList.length !== 1 ? "s" : ""} as comments on the ${mrData?.platform === "gitlab" ? "MR" : "PR"}?`)) return;
-
     setPostingSelected(true);
     try {
       const result = await postInlineComments({
@@ -520,6 +520,21 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
     }
   };
 
+  const handlePostSelected = () => {
+    if (!prUrl || !effectiveToken || selectedCount === 0) return;
+    const count = review.issues.filter((i) => selectedIssues.has(i.id)).length;
+    const platform = mrData?.platform === "gitlab" ? "MR" : "PR";
+    setConfirmModal({
+      title: `Post ${count} Comment${count !== 1 ? "s" : ""} to ${platform}`,
+      message: `This will post ${count} issue${count !== 1 ? "s" : ""} as inline comments on the ${platform}. This action cannot be undone.`,
+      confirmLabel: `Post ${count} Comment${count !== 1 ? "s" : ""}`,
+      onConfirm: () => {
+        setConfirmModal(null);
+        doPostSelected();
+      },
+    });
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
@@ -541,18 +556,26 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
             <div className="flex items-center gap-2">
               {canPost && (
                 <button
-                  onClick={async () => {
-                    if (!confirm("Post this review as a comment on the PR/MR?")) return;
-                    setPosting(true);
-                    try {
-                      const body = buildReviewMarkdown();
-                      await postReviewComment({ url: prUrl!, token: effectiveToken, body });
-                      toast.success("Review posted to PR!");
-                    } catch (err: unknown) {
-                      toast.error(`Failed to post: ${err instanceof Error ? err.message : "Unknown error"}`);
-                    } finally {
-                      setPosting(false);
-                    }
+                  onClick={() => {
+                    const platform = mrData?.platform === "gitlab" ? "MR" : "PR";
+                    setConfirmModal({
+                      title: `Post Review to ${platform}`,
+                      message: `This will post the full code review as a comment on the ${platform}. This action cannot be undone.`,
+                      confirmLabel: `Post to ${platform}`,
+                      onConfirm: async () => {
+                        setConfirmModal(null);
+                        setPosting(true);
+                        try {
+                          const body = buildReviewMarkdown();
+                          await postReviewComment({ url: prUrl!, token: effectiveToken, body });
+                          toast.success("Review posted to PR!");
+                        } catch (err: unknown) {
+                          toast.error(`Failed to post: ${err instanceof Error ? err.message : "Unknown error"}`);
+                        } finally {
+                          setPosting(false);
+                        }
+                      },
+                    });
                   }}
                   disabled={posting}
                   className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card disabled:opacity-50"
@@ -974,6 +997,16 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
           </div>
         </div>
       </div>
+
+      <ConfirmModal
+        open={!!confirmModal}
+        title={confirmModal?.title ?? ""}
+        message={confirmModal?.message ?? ""}
+        confirmLabel={confirmModal?.confirmLabel ?? "Confirm"}
+        variant="warning"
+        onConfirm={() => confirmModal?.onConfirm()}
+        onCancel={() => setConfirmModal(null)}
+      />
     </motion.div>
   );
 }
