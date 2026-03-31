@@ -110,9 +110,10 @@ async function fetchGitLabMR(url: string, token?: string): Promise<MRData> {
   if (token) headers["PRIVATE-TOKEN"] = token;
 
   // Requests go to /api/gitlab/... which is proxied to gitlab.com
-  const [mrRes, changesRes] = await Promise.all([
+  const [mrRes, changesRes, commitsRes] = await Promise.all([
     fetch(`/api/gitlab/api/v4/projects/${encodedPath}/merge_requests/${mrIid}?include_diverged_commits_count=true`, { headers }),
     fetch(`/api/gitlab/api/v4/projects/${encodedPath}/merge_requests/${mrIid}/changes`, { headers }),
+    fetch(`/api/gitlab/api/v4/projects/${encodedPath}/merge_requests/${mrIid}/commits?per_page=1`, { headers }),
   ]);
 
   if (!mrRes.ok) throw new Error(`GitLab API error: ${mrRes.status}`);
@@ -120,6 +121,9 @@ async function fetchGitLabMR(url: string, token?: string): Promise<MRData> {
 
   const mr = await mrRes.json();
   const changesData = await changesRes.json();
+
+  // Get commit count from response header (x-total) or fall back to MR field
+  const commitCount = parseInt(commitsRes.headers.get("x-total") ?? "", 10) || mr.commits_count || 0;
 
   type GitLabChange = { new_path: string; diff?: string; new_file: boolean; deleted_file: boolean; renamed_file: boolean; additions?: number; deletions?: number };
   const changes: GitLabChange[] = changesData.changes ?? [];
@@ -150,7 +154,7 @@ async function fetchGitLabMR(url: string, token?: string): Promise<MRData> {
       return s + (c.diff ? parseDiffStats(c.diff).deletions : 0);
     }, 0),
     changedFiles: changes.length,
-    commits: mr.commits_count ?? 0,
+    commits: commitCount,
     createdAt: mr.created_at,
     url,
   };

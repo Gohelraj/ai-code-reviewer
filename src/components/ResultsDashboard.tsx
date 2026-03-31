@@ -66,7 +66,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
           if (summary) onTabChange("summary");
           break;
         case "2":
-          if (executionFlow) onTabChange("flow");
+          if (executionFlow || isAnalyzing) onTabChange("flow");
           break;
         case "3":
           onTabChange("review");
@@ -168,10 +168,12 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
               const isReviewTab = tab.id === "review";
-              const isAvailable = tab.id === "summary" ? !!summary : tab.id === "flow" ? !!executionFlow : !!codeReview;
+              const isFlowTab = tab.id === "flow";
+              const isAvailable = tab.id === "summary" ? !!summary : isFlowTab ? !!executionFlow : !!codeReview;
               const isReviewPending = isReviewTab && !codeReview && !reviewLoading;
               const isReviewRunning = isReviewTab && reviewLoading;
-              const canClick = isAvailable || isReviewPending;
+              const isFlowLoading = isFlowTab && !executionFlow && isAnalyzing;
+              const canClick = isAvailable || isReviewPending || isFlowLoading;
 
               // Tab preview text
               let preview = "";
@@ -187,17 +189,15 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
                 <button
                   key={tab.id}
                   onClick={() => {
-                    if (isAvailable) {
-                      onTabChange(tab.id);
-                    } else if (isReviewPending) {
+                    if (isAvailable || isReviewPending || isFlowLoading) {
                       onTabChange(tab.id);
                     }
                   }}
-                  disabled={!canClick && !isReviewRunning}
+                  disabled={!canClick && !isReviewRunning && !isFlowLoading}
                   className={`relative flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors border-b-2 flex-shrink-0 ${
                     isActive
                       ? "text-foreground border-foreground"
-                      : canClick || isReviewRunning
+                      : canClick || isReviewRunning || isFlowLoading
                       ? "text-muted-foreground border-transparent hover:text-foreground hover:border-border"
                       : "text-muted-foreground/40 border-transparent cursor-not-allowed"
                   }`}
