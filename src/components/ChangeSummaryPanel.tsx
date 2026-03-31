@@ -2,12 +2,13 @@ import { motion } from "framer-motion";
 import { AlertTriangle, Code2, TestTube, Layers, TrendingUp, TrendingDown, Minus, Copy, Check } from "lucide-react";
 import type { ChangeSummary, MRData } from "../types";
 import { DiffViewer, DiffStats } from "./DiffViewer";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import toast from "react-hot-toast";
 
 interface ChangeSummaryPanelProps {
   summary: ChangeSummary;
   mrData: MRData;
+  scrollToFile?: string | null;
 }
 
 const CHANGE_TYPE_COLORS: Record<string, string> = {
@@ -39,9 +40,20 @@ function ImpactBadge({ impact }: { impact: string }) {
   );
 }
 
-export function ChangeSummaryPanel({ summary, mrData }: ChangeSummaryPanelProps) {
+export function ChangeSummaryPanel({ summary, mrData, scrollToFile }: ChangeSummaryPanelProps) {
   const [showAllDiffs, setShowAllDiffs] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // Auto-expand all diffs when navigating to a specific file
+  useEffect(() => {
+    if (scrollToFile && mrData.files.length > 5) {
+      const idx = mrData.files.findIndex((f) => f.filename === scrollToFile);
+      if (idx >= 5) {
+        setShowAllDiffs(true);
+      }
+    }
+  }, [scrollToFile, mrData.files]);
+
   const displayedFiles = showAllDiffs ? mrData.files : mrData.files.slice(0, 5);
 
   const copySummary = () => {

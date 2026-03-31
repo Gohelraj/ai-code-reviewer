@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { ChevronDown, ChevronUp, Plus, Minus, FilePlus, FileX, FilePen, Columns2, Rows3 } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, Minus, FilePlus, FileX, FilePen, Columns2, Rows3, FileText } from "lucide-react";
 import type { FileDiff } from "../types";
 import { getHighlighter, detectLanguage } from "../lib/highlighter";
 import type { BundledLanguage } from "shiki";
@@ -383,11 +383,120 @@ function SplitDiffView({ lines, filename }: { lines: DiffLine[]; filename: strin
   );
 }
 
+// ─── Full file view with highlighted changes ───────────────────────────────
+
+function extractChangedNewLines(patch: string): Set<number> {
+  const changed = new Set<number>();
+  let newLine = 0;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("@@")) {
+      const m = line.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (m) newLine = parseInt(m[1], 10);
+    } else if (line.startsWith("+") && !line.startsWith("+++")) {
+      changed.add(newLine);
+      newLine++;
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      // removed lines don't appear in the new file
+    } else if (!line.startsWith("\\")) {
+      newLine++;
+    }
+  }
+  return changed;
+}
+
+function useHighlightedFullFile(content: string, filename: string): Map<number, string> {
+  const [highlighted, setHighlighted] = useState<Map<number, string>>(new Map());
+  const lang = useMemo(() => detectLanguage(filename), [filename]);
+  const isDark = useMemo(() => document.documentElement.classList.contains("dark"), []);
+  const lines = useMemo(() => content.split("\n"), [content]);
+
+  useEffect(() => {
+    if (lang === "text" || lines.length === 0) return;
+    let cancelled = false;
+
+    getHighlighter().then((highlighter) => {
+      if (cancelled) return;
+      const map = new Map<number, string>();
+      const theme = isDark ? "github-dark" : "github-light";
+      for (let i = 0; i < lines.length; i++) {
+        try {
+          const tokens = highlighter.codeToTokens(lines[i], { lang: lang as BundledLanguage, theme });
+          const html = tokens.tokens[0]
+            ?.map((t) => `<span style="color:${t.color}">${escapeHtml(t.content)}</span>`)
+            .join("") ?? escapeHtml(lines[i]);
+          map.set(i, html);
+        } catch {
+          map.set(i, escapeHtml(lines[i]));
+        }
+      }
+      if (!cancelled) setHighlighted(map);
+    });
+
+    return () => { cancelled = true; };
+  }, [lines, lang, isDark]);
+
+  return highlighted;
+}
+
+function FullFileView({ file }: { file: FileDiff }) {
+  const content = file.fullContent ?? "";
+  const lines = useMemo(() => content.split("\n"), [content]);
+  const changedLines = useMemo(() => file.patch ? extractChangedNewLines(file.patch) : new Set<number>(), [file.patch]);
+  const highlighted = useHighlightedFullFile(content, file.filename);
+  const gutterWidth = useMemo(() => Math.max(3, String(lines.length).length + 1), [lines.length]);
+
+  return (
+    <div className="font-mono text-xs leading-5">
+      {lines.map((line, idx) => {
+        const lineNum = idx + 1;
+        const isChanged = changedLines.has(lineNum);
+        const hl = highlighted.get(idx);
+
+        return (
+          <div
+            key={idx}
+            className={`flex min-w-0 ${
+              isChanged ? "bg-accent/12 dark:bg-accent/15 border-l-2 border-accent" : ""
+            }`}
+          >
+            {/* Line number */}
+            <span
+              className={`select-none text-right pr-2 flex-shrink-0 py-0.5 border-r border-border/50 ${
+                isChanged ? "text-accent font-medium bg-accent/8" : "text-muted-foreground/50"
+              }`}
+              style={{ width: `${gutterWidth}ch` }}
+            >
+              {lineNum}
+            </span>
+            {/* Change indicator */}
+            <span className={`select-none w-5 text-center flex-shrink-0 py-0.5 ${
+              isChanged ? "text-accent" : "text-transparent"
+            }`}>
+              {isChanged ? "+" : " "}
+            </span>
+            {/* Content */}
+            {hl ? (
+              <span
+                className="flex-1 py-0.5 pr-2 whitespace-pre-wrap break-all [&>span]:!bg-transparent"
+                dangerouslySetInnerHTML={{ __html: hl }}
+              />
+            ) : (
+              <span className="flex-1 text-foreground py-0.5 pr-2 whitespace-pre-wrap break-all">
+                {line}
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Main DiffViewer component ──────────────────────────────────────────────
 
 export function DiffViewer({ file, defaultOpen = false }: DiffViewerProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
-  const [viewMode, setViewMode] = useState<"inline" | "split">("inline");
+  const [viewMode, setViewMode] = useState<"inline" | "split" | "full">("inline");
   const filename = file.filename.split("/").pop() ?? file.filename;
   const filepath = file.filename.substring(0, file.filename.length - filename.length);
   const lines = useMemo(() => file.patch ? parsePatch(file.patch) : [], [file.patch]);
@@ -443,9 +552,22 @@ export function DiffViewer({ file, defaultOpen = false }: DiffViewerProps) {
                   <Columns2 size={12} />
                   Split
                 </button>
+                {file.fullContent && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setViewMode("full"); }}
+                    className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors ${
+                      viewMode === "full" ? "bg-background text-foreground shadow-sm border border-border" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <FileText size={12} />
+                    Full File
+                  </button>
+                )}
               </div>
               <div className="overflow-x-auto max-h-[500px] overflow-y-auto bg-background/50">
-                {viewMode === "inline" ? (
+                {viewMode === "full" && file.fullContent ? (
+                  <FullFileView file={file} />
+                ) : viewMode === "inline" ? (
                   <InlineDiffView lines={lines} filename={file.filename} />
                 ) : (
                   <SplitDiffView lines={lines} filename={file.filename} />

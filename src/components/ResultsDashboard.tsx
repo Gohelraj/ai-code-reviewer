@@ -104,14 +104,34 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
       }
       return false;
     };
+
+    // Already visible on current tab
     if (tryScroll()) return;
+
+    // Switch tab + signal the panel to expand all files
     const targetTab = summary ? "summary" : codeReview ? "review" : null;
     if (targetTab) {
       onTabChange(targetTab);
+      setScrollToFile(filename);
       const shortName = filename.split("/").pop() ?? filename;
       toast(`Switched to ${targetTab === "summary" ? "Summary" : "Review"} tab for ${shortName}`, { icon: "📄", duration: 2000 });
     }
-    setTimeout(() => tryScroll(), 150);
+
+    // Retry with backoff until the element appears (new tab renders)
+    let attempts = 0;
+    const retry = () => {
+      if (tryScroll()) {
+        setScrollToFile(null);
+        return;
+      }
+      attempts++;
+      if (attempts < 15) {
+        requestAnimationFrame(retry);
+      } else {
+        setScrollToFile(null);
+      }
+    };
+    requestAnimationFrame(retry);
   }, [summary, codeReview, onTabChange]);
 
   const handleExport = useCallback(() => {
@@ -137,6 +157,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
   const [aiConfigOpen, setAiConfigOpen] = useState(false);
   const [localAIConfig, setLocalAIConfig] = useState<AIConfig | null>(aiConfig ?? null);
+  const [scrollToFile, setScrollToFile] = useState<string | null>(null);
 
   useEffect(() => {
     if (historyOpen) {
@@ -234,7 +255,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
         <main className="flex-1 min-w-0 overflow-y-auto">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 pb-20 sm:pb-6">
         {activeTab === "summary" && summary && (
-          <ChangeSummaryPanel summary={summary} mrData={mrData} />
+          <ChangeSummaryPanel summary={summary} mrData={mrData} scrollToFile={scrollToFile} />
         )}
         {activeTab === "summary" && !summary && isAnalyzing && (
           <SummarySkeleton />
