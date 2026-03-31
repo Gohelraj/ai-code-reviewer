@@ -314,7 +314,7 @@ const REVIEW_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
     overallVerdict: { type: "string", enum: ["approve", "approve_with_suggestions", "request_changes", "needs_discussion"] },
-    overallScore: { type: "number", minimum: 0, maximum: 10 },
+    overallScore: { type: "number" },
     executiveSummary: { type: "string" },
     strengths: { type: "array", items: { type: "string" } },
     issues: {
