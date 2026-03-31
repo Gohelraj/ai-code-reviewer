@@ -86,7 +86,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
             <div className="w-7 h-7 rounded-lg bg-foreground flex items-center justify-center flex-shrink-0">
               <GitPullRequest size={14} className="text-background" />
             </div>
-            <span className="font-semibold text-foreground tracking-tight hidden sm:block">MergeAI Reviewer</span>
+            <span className="font-semibold text-foreground tracking-tight hidden sm:block">AI Code Reviewer</span>
 
             <div className="flex-1 min-w-0 mx-2">
               <div className="flex items-center gap-2">

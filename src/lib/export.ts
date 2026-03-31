@@ -5,7 +5,7 @@ export function exportAsMarkdown(state: AnalysisState): string {
   const lines: string[] = [];
 
   if (mrData) {
-    lines.push(`# MergeAI Review: ${mrData.pr.title}`);
+    lines.push(`# AI Code Review: ${mrData.pr.title}`);
     lines.push(``);
     lines.push(`**Platform:** ${mrData.platform === "github" ? "GitHub" : "GitLab"}`);
     lines.push(`**Author:** ${mrData.pr.author}`);

@@ -19,7 +19,7 @@ async function fetchGitHubPR(url: string, token?: string): Promise<MRData> {
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "MergeAI-Reviewer/1.0",
+    "User-Agent": "AI-Code-Reviewer/1.0",
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
@@ -213,7 +213,7 @@ async function callOpenRouter<T>(
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
       "HTTP-Referer": window.location.origin,
-      "X-Title": "MergeAI Reviewer",
+      "X-Title": "AI Code Reviewer",
     },
     body: JSON.stringify({
       model,
@@ -314,7 +314,7 @@ const REVIEW_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
     overallVerdict: { type: "string", enum: ["approve", "approve_with_suggestions", "request_changes", "needs_discussion"] },
-    overallScore: { type: "number" },
+    overallScore: { type: "number", minimum: 0, maximum: 10 },
     executiveSummary: { type: "string" },
     strengths: { type: "array", items: { type: "string" } },
     issues: {
@@ -491,6 +491,7 @@ Use the full file content (when present) to catch issues that only appear in con
 - Security issues like hardcoded secrets, missing auth checks, injection vectors
 
 Be precise: always provide the exact file path and line reference when flagging an issue.
+IMPORTANT: overallScore must be a decimal between 0.0 and 10.0 (e.g. 6.5, not 65).
 Always return valid JSON. For optional string fields (file, lineHint, currentCode, impact) always provide a string value (use "" if not applicable).`;
 
   const userPrompt = `PR Title: ${pr.title}
@@ -504,8 +505,15 @@ ${diffContent}
 
 Perform a comprehensive senior-level code review using the full file context above.`;
 
-  return callOpenRouter<CodeReview>(aiConfig.apiKey, aiConfig.model, [
+  const review = await callOpenRouter<CodeReview>(aiConfig.apiKey, aiConfig.model, [
     { role: "system", content: systemPrompt },
     { role: "user", content: userPrompt },
   ], REVIEW_SCHEMA);
+
+  // Normalise score: some models return 0–100 even when instructed otherwise
+  if (review.overallScore > 10) {
+    review.overallScore = Math.round((review.overallScore / 10) * 10) / 10;
+  }
+
+  return review;
 }

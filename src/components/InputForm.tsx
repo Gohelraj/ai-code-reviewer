@@ -55,7 +55,7 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
           <div className="w-8 h-8 rounded-lg bg-foreground flex items-center justify-center flex-shrink-0">
             <GitPullRequest size={16} className="text-background" />
           </div>
-          <span className="font-semibold text-foreground tracking-tight text-lg">MergeAI Reviewer</span>
+          <span className="font-semibold text-foreground tracking-tight text-lg">AI Code Reviewer</span>
           <div className="ml-auto flex items-center gap-2">
             <ThemeToggle theme={theme} onThemeChange={onThemeChange} />
           </div>

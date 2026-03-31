@@ -64,7 +64,7 @@ export function AnalysisProgress({ step, prTitle, error, onReset, aiConfig, them
           <div className="w-8 h-8 rounded-lg bg-foreground flex items-center justify-center">
             <GitPullRequest size={16} className="text-background" />
           </div>
-          <span className="font-semibold text-foreground tracking-tight text-lg">MergeAI Reviewer</span>
+          <span className="font-semibold text-foreground tracking-tight text-lg">AI Code Reviewer</span>
           <div className="ml-auto">
             <ThemeToggle theme={theme} onThemeChange={onThemeChange} />
           </div>
