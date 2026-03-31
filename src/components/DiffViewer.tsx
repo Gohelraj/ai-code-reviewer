@@ -1,8 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { ChevronDown, ChevronUp, Plus, Minus, FilePlus, FileX, FilePen, Columns2, Rows3, FileText } from "lucide-react";
 import type { FileDiff } from "../types";
-import { getHighlighter, detectLanguage } from "../lib/highlighter";
-import type { BundledLanguage } from "shiki";
+import { getHighlighter, detectLanguage, isSupportedLanguage, type SupportedLanguage } from "../lib/highlighter";
 
 interface DiffViewerProps {
   file: FileDiff;
@@ -133,7 +132,7 @@ function useHighlightedLines(lines: DiffLine[], filename: string): Map<number, s
   const isDark = useMemo(() => document.documentElement.classList.contains("dark"), []);
 
   useEffect(() => {
-    if (lang === "text" || lines.length === 0) return;
+    if (!isSupportedLanguage(lang) || lines.length === 0) return;
     let cancelled = false;
 
     getHighlighter().then((highlighter) => {
@@ -144,7 +143,7 @@ function useHighlightedLines(lines: DiffLine[], filename: string): Map<number, s
         const line = lines[i];
         if (line.type === "hunk" || line.type === "meta") continue;
         try {
-          const tokens = highlighter.codeToTokens(line.content, { lang: lang as BundledLanguage, theme });
+          const tokens = highlighter.codeToTokens(line.content, { lang: lang as SupportedLanguage, theme });
           const html = tokens.tokens[0]
             ?.map((t) => `<span style="color:${t.color}">${escapeHtml(t.content)}</span>`)
             .join("") ?? escapeHtml(line.content);
@@ -411,7 +410,7 @@ function useHighlightedFullFile(content: string, filename: string): Map<number, 
   const lines = useMemo(() => content.split("\n"), [content]);
 
   useEffect(() => {
-    if (lang === "text" || lines.length === 0) return;
+    if (!isSupportedLanguage(lang) || lines.length === 0) return;
     let cancelled = false;
 
     getHighlighter().then((highlighter) => {
@@ -420,7 +419,7 @@ function useHighlightedFullFile(content: string, filename: string): Map<number, 
       const theme = isDark ? "github-dark" : "github-light";
       for (let i = 0; i < lines.length; i++) {
         try {
-          const tokens = highlighter.codeToTokens(lines[i], { lang: lang as BundledLanguage, theme });
+          const tokens = highlighter.codeToTokens(lines[i], { lang: lang as SupportedLanguage, theme });
           const html = tokens.tokens[0]
             ?.map((t) => `<span style="color:${t.color}">${escapeHtml(t.content)}</span>`)
             .join("") ?? escapeHtml(lines[i]);

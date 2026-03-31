@@ -1,13 +1,42 @@
-import { createHighlighter, type Highlighter, type BundledLanguage } from "shiki";
-
-let highlighterPromise: Promise<Highlighter> | null = null;
+import { createBundledHighlighter } from "@shikijs/core";
+import { createJavaScriptRegexEngine } from "@shikijs/engine-javascript";
+import type { HighlighterGeneric } from "@shikijs/types";
 
 const SUPPORTED_LANGS = [
   "typescript", "javascript", "tsx", "jsx", "css", "json",
-  "python", "go", "java", "rust", "yaml", "html", "markdown",
-  "bash", "sql", "ruby", "php", "c", "cpp", "csharp", "swift",
-  "kotlin", "scala", "dockerfile", "xml", "toml",
+  "python", "go", "java", "rust", "yaml", "html",
+  "bash", "sql", "dockerfile", "toml",
 ] as const;
+type SupportedLanguage = (typeof SUPPORTED_LANGS)[number];
+type SupportedTheme = "github-light" | "github-dark";
+
+const createHighlighter = createBundledHighlighter<SupportedLanguage, SupportedTheme>({
+  langs: {
+    typescript: () => import("@shikijs/langs/typescript"),
+    javascript: () => import("@shikijs/langs/javascript"),
+    tsx: () => import("@shikijs/langs/tsx"),
+    jsx: () => import("@shikijs/langs/jsx"),
+    css: () => import("@shikijs/langs/css"),
+    json: () => import("@shikijs/langs/json"),
+    python: () => import("@shikijs/langs/python"),
+    go: () => import("@shikijs/langs/go"),
+    java: () => import("@shikijs/langs/java"),
+    rust: () => import("@shikijs/langs/rust"),
+    yaml: () => import("@shikijs/langs/yaml"),
+    html: () => import("@shikijs/langs/html"),
+    bash: () => import("@shikijs/langs/bash"),
+    sql: () => import("@shikijs/langs/sql"),
+    dockerfile: () => import("@shikijs/langs/docker"),
+    toml: () => import("@shikijs/langs/toml"),
+  },
+  themes: {
+    "github-light": () => import("@shikijs/themes/github-light"),
+    "github-dark": () => import("@shikijs/themes/github-dark"),
+  },
+  engine: () => createJavaScriptRegexEngine(),
+});
+
+let highlighterPromise: Promise<HighlighterGeneric<SupportedLanguage, SupportedTheme>> | null = null;
 
 const EXT_TO_LANG: Record<string, string> = {
   ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx",
@@ -32,7 +61,13 @@ export function detectLanguage(filename: string): string {
   return EXT_TO_LANG[ext] ?? "text";
 }
 
-export function getHighlighter(): Promise<Highlighter> {
+export function isSupportedLanguage(lang: string): lang is SupportedLanguage {
+  return SUPPORTED_LANGS.includes(lang as SupportedLanguage);
+}
+
+export type { SupportedLanguage };
+
+export function getHighlighter(): Promise<HighlighterGeneric<SupportedLanguage, SupportedTheme>> {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
       themes: ["github-light", "github-dark"],
@@ -48,13 +83,13 @@ export async function highlightCode(
   isDark: boolean,
 ): Promise<string> {
   try {
+    if (!isSupportedLanguage(lang)) {
+      return `<pre><code>${escapeHtml(code)}</code></pre>`;
+    }
     const highlighter = await getHighlighter();
     const theme = isDark ? "github-dark" : "github-light";
-    const validLang = SUPPORTED_LANGS.includes(lang as (typeof SUPPORTED_LANGS)[number])
-      ? lang
-      : "text";
     return highlighter.codeToHtml(code, {
-      lang: validLang,
+      lang,
       theme,
     });
   } catch {

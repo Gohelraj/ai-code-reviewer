@@ -1,13 +1,27 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Cpu, ChevronDown, ChevronUp, Eye, EyeOff, ExternalLink, Check } from "lucide-react";
+import { Cpu, ChevronDown, ChevronUp, Eye, EyeOff, ExternalLink, Check, Save, Trash2, Bookmark } from "lucide-react";
 import toast from "react-hot-toast";
+import type { AnalysisState } from "../types";
+
+export type PostingMode = "inline" | "general";
+
+export interface AIPreset {
+  id: string;
+  name: string;
+  model: string;
+  customRules: string;
+  postingMode?: PostingMode;
+}
 
 export interface AIConfig {
   provider: "openrouter";
   apiKey: string;
   model: string;
   customRules?: string;
+  postingMode?: PostingMode;
+  presets?: AIPreset[];
+  lastPresetId?: string;
 }
 
 export const OPENROUTER_MODELS = [
@@ -41,10 +55,22 @@ const DEFAULT_CONFIG: AIConfig = {
   apiKey: "",
   model: "anthropic/claude-sonnet-4-6",
   customRules: "",
+  postingMode: "inline",
+  presets: [],
+  lastPresetId: "",
 };
 
 // Persist to localStorage
 const STORAGE_KEY = "mergeai_ai_config";
+const REPO_DEFAULTS_KEY = "mergeai_repo_defaults";
+
+interface RepoDefaults {
+  model?: string;
+  customRules?: string;
+  postingMode?: PostingMode;
+  lastPresetId?: string;
+  defaultTab?: AnalysisState["activeTab"];
+}
 
 export function loadAIConfig(): AIConfig {
   try {
@@ -60,10 +86,58 @@ export function saveAIConfig(config: AIConfig) {
   } catch {}
 }
 
+export function loadRepoDefaults(repoKey?: string | null): RepoDefaults | null {
+  if (!repoKey) return null;
+  try {
+    const stored = localStorage.getItem(REPO_DEFAULTS_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as Record<string, RepoDefaults>;
+    return parsed[repoKey] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveRepoDefaults(repoKey: string, defaults: Partial<RepoDefaults>) {
+  try {
+    const stored = localStorage.getItem(REPO_DEFAULTS_KEY);
+    const parsed = stored ? JSON.parse(stored) as Record<string, RepoDefaults> : {};
+    parsed[repoKey] = { ...(parsed[repoKey] ?? {}), ...defaults };
+    localStorage.setItem(REPO_DEFAULTS_KEY, JSON.stringify(parsed));
+  } catch {}
+}
+
+export function resolveAIConfigForRepo(baseConfig: AIConfig, repoKey?: string | null): AIConfig {
+  const defaults = loadRepoDefaults(repoKey);
+  if (!defaults) return { ...DEFAULT_CONFIG, ...baseConfig };
+
+  const preset = baseConfig.presets?.find((item) => item.id === defaults.lastPresetId);
+  if (preset) {
+    return {
+      ...DEFAULT_CONFIG,
+      ...baseConfig,
+      model: preset.model,
+      customRules: preset.customRules,
+      postingMode: preset.postingMode ?? defaults.postingMode ?? baseConfig.postingMode ?? "inline",
+      lastPresetId: preset.id,
+    };
+  }
+
+  return {
+    ...DEFAULT_CONFIG,
+    ...baseConfig,
+    model: defaults.model ?? baseConfig.model,
+    customRules: defaults.customRules ?? baseConfig.customRules,
+    postingMode: defaults.postingMode ?? baseConfig.postingMode ?? "inline",
+    lastPresetId: defaults.lastPresetId ?? baseConfig.lastPresetId,
+  };
+}
+
 interface AISettingsProps {
   config: AIConfig;
   onChange: (config: AIConfig) => void;
   disabled?: boolean;
+  repoKey?: string | null;
 }
 
 // Group models
@@ -73,19 +147,76 @@ const MODEL_GROUPS = OPENROUTER_MODELS.reduce<Record<string, typeof OPENROUTER_M
   return acc;
 }, {});
 
-export function AISettings({ config, onChange, disabled }: AISettingsProps) {
+export function AISettings({ config, onChange, disabled, repoKey }: AISettingsProps) {
   const [isOpen, setIsOpen] = useState(!config.apiKey);
   const [showKey, setShowKey] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [presetName, setPresetName] = useState("");
 
   const isOpenRouter = true;
   const selectedModel = OPENROUTER_MODELS.find((m) => m.id === config.model);
+  const selectedPreset = config.presets?.find((preset) => preset.id === config.lastPresetId);
 
   const handleSave = () => {
     saveAIConfig(config);
+    if (repoKey) {
+      saveRepoDefaults(repoKey, {
+        model: config.model,
+        customRules: config.customRules ?? "",
+        postingMode: config.postingMode ?? "inline",
+        lastPresetId: config.lastPresetId,
+      });
+    }
     toast.success("AI settings saved to browser");
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const handleSavePreset = () => {
+    const name = presetName.trim();
+    if (!name) {
+      toast.error("Enter a preset name first");
+      return;
+    }
+
+    const preset: AIPreset = {
+      id: `preset-${Date.now().toString(36)}`,
+      name,
+      model: config.model,
+      customRules: config.customRules ?? "",
+      postingMode: config.postingMode ?? "inline",
+    };
+
+    onChange({
+      ...config,
+      presets: [...(config.presets ?? []), preset],
+      lastPresetId: preset.id,
+    });
+    setPresetName("");
+    toast.success(`Saved preset "${name}"`);
+  };
+
+  const handleApplyPreset = (presetId: string) => {
+    const preset = config.presets?.find((item) => item.id === presetId);
+    if (!preset) return;
+    onChange({
+      ...config,
+      model: preset.model,
+      customRules: preset.customRules,
+      postingMode: preset.postingMode ?? "inline",
+      lastPresetId: preset.id,
+    });
+    toast.success(`Applied preset "${preset.name}"`);
+  };
+
+  const handleDeletePreset = (presetId: string) => {
+    const preset = config.presets?.find((item) => item.id === presetId);
+    onChange({
+      ...config,
+      presets: (config.presets ?? []).filter((item) => item.id !== presetId),
+      lastPresetId: config.lastPresetId === presetId ? "" : config.lastPresetId,
+    });
+    toast.success(`Deleted preset "${preset?.name ?? "Preset"}"`);
   };
 
   return (
@@ -164,7 +295,7 @@ export function AISettings({ config, onChange, disabled }: AISettingsProps) {
                       </button>
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Key is sent to the analysis server and never logged or stored permanently.
+                      The key is used directly from your browser for OpenRouter requests and is only stored locally if you save settings.
                     </p>
                   </div>
 
@@ -192,6 +323,22 @@ export function AISettings({ config, onChange, disabled }: AISettingsProps) {
                     </p>
                   </div>
 
+                  <div>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Posting Preference</p>
+                    <select
+                      value={config.postingMode ?? "inline"}
+                      onChange={(e) => onChange({ ...config, postingMode: e.target.value as PostingMode })}
+                      disabled={disabled}
+                      className="w-full px-3 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all text-foreground appearance-none cursor-pointer"
+                    >
+                      <option value="inline">Prefer inline comments</option>
+                      <option value="general">Prefer general comments</option>
+                    </select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Inline tries line-level comments first. General posts MR/PR-level notes directly.
+                    </p>
+                  </div>
+
                   {/* Custom review rules */}
                   <div>
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Custom Review Rules (optional)</p>
@@ -206,6 +353,80 @@ export function AISettings({ config, onChange, disabled }: AISettingsProps) {
                     <p className="text-xs text-muted-foreground mt-1">
                       Add team-specific rules or focus areas. These are injected into the review prompt.
                     </p>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Presets</p>
+                      {selectedPreset && (
+                        <span className="text-[11px] text-accent bg-accent/10 border border-accent/20 rounded-full px-2 py-0.5">
+                          Active: {selectedPreset.name}
+                        </span>
+                      )}
+                    </div>
+
+                    {config.presets && config.presets.length > 0 && (
+                      <div className="space-y-2">
+                        {config.presets.map((preset) => (
+                          <div key={preset.id} className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
+                            <button
+                              type="button"
+                              onClick={() => handleApplyPreset(preset.id)}
+                              className="flex-1 text-left"
+                            >
+                              <p className="text-sm text-foreground font-medium">{preset.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {OPENROUTER_MODELS.find((model) => model.id === preset.model)?.label ?? preset.model} · {(preset.postingMode ?? "inline") === "inline" ? "Inline" : "General"}
+                              </p>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleApplyPreset(preset.id)}
+                              className="text-xs px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                            >
+                              Apply
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeletePreset(preset.id)}
+                              className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                              title="Delete preset"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-1">
+                        <Bookmark size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                        <input
+                          type="text"
+                          value={presetName}
+                          onChange={(e) => setPresetName(e.target.value)}
+                          placeholder="Save current setup as preset"
+                          disabled={disabled}
+                          className="w-full pl-9 pr-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all placeholder:text-muted-foreground/50 text-foreground"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSavePreset}
+                        disabled={disabled || !presetName.trim()}
+                        className="flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-border bg-card hover:bg-secondary transition-all disabled:opacity-50 text-foreground"
+                      >
+                        <Save size={12} />
+                        Save
+                      </button>
+                    </div>
+
+                    {repoKey && (
+                      <p className="text-xs text-muted-foreground">
+                        Saving settings also stores the active preset and posting mode as defaults for this repository.
+                      </p>
+                    )}
                   </div>
 
                   {/* Save button */}

@@ -105,8 +105,11 @@ export function exportAsMarkdown(state: AnalysisState): string {
       for (const i of codeReview.issues) {
         lines.push(`#### [${i.severity.toUpperCase()}] ${i.title}`);
         if (i.file) lines.push(`**File:** ${i.file}${i.lineHint ? ` · ${i.lineHint}` : ""}`);
+        lines.push(`**Confidence:** ${i.confidence.toUpperCase()}`);
         lines.push(``);
         lines.push(i.description);
+        lines.push(``);
+        lines.push(`**Rationale:** ${i.rationale}`);
         if (i.currentCode) {
           lines.push(``);
           lines.push(`**Problematic Code:**`);
@@ -127,6 +130,28 @@ export function exportAsMarkdown(state: AnalysisState): string {
         }
         lines.push(``);
       }
+    }
+
+    if (codeReview.testGapSummary) {
+      lines.push(`### Test Gap Summary`);
+      lines.push(codeReview.testGapSummary);
+      lines.push(``);
+    }
+
+    if (codeReview.riskHotspots.length > 0) {
+      lines.push(`### Risk Hotspots`);
+      for (const hotspot of codeReview.riskHotspots) {
+        lines.push(`- **${hotspot.file}** (${hotspot.score}) — ${hotspot.reasons.join("; ")}`);
+      }
+      lines.push(``);
+    }
+
+    if (codeReview.reviewerSuggestions && codeReview.reviewerSuggestions.length > 0) {
+      lines.push(`### Reviewer Routing`);
+      for (const suggestion of codeReview.reviewerSuggestions) {
+        lines.push(`- **${suggestion.reviewer}** — ${suggestion.files.join(", ")}`);
+      }
+      lines.push(``);
     }
 
     if (codeReview.architectureObservations.length > 0) {

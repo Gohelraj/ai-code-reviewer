@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import toast from "react-hot-toast";
 import { InputForm } from "./components/InputForm";
 import type { SubmitPayload } from "./components/InputForm";
@@ -10,21 +10,28 @@ import { saveAnalysis } from "./lib/history";
 import type { HistoryEntry } from "./lib/history";
 import type { AnalysisState } from "./types";
 import type { AIConfig } from "./components/AISettings";
-import { saveAIConfig } from "./components/AISettings";
+import { loadRepoDefaults, saveAIConfig, saveRepoDefaults } from "./components/AISettings";
 import { useDarkMode } from "./lib/useDarkMode";
+import { computeReviewDiff, getRepoKeyFromUrl, readUiStateFromLocation, writeUiStateToLocation } from "./lib/review-utils";
 
-const INITIAL_STATE: AnalysisState = {
-  step: "idle",
-  mrData: null,
-  summary: null,
-  executionFlow: null,
-  codeReview: null,
-  error: null,
-  activeTab: "summary",
-};
+function createInitialState(): AnalysisState {
+  const locationState = typeof window !== "undefined" ? readUiStateFromLocation() : {};
+  return {
+    step: "idle",
+    mrData: null,
+    summary: null,
+    executionFlow: null,
+    codeReview: null,
+    error: null,
+    activeTab: locationState.activeTab ?? "summary",
+    reviewChat: [],
+    selectedFile: locationState.selectedFile,
+    selectedIssueId: locationState.selectedIssueId,
+  };
+}
 
 function App() {
-  const [state, setState] = useState<AnalysisState>(INITIAL_STATE);
+  const [state, setState] = useState<AnalysisState>(createInitialState);
   const [activeAIConfig, setActiveAIConfig] = useState<AIConfig | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reqLoading, setReqLoading] = useState(false);
@@ -38,8 +45,23 @@ function App() {
     setState((prev) => ({ ...prev, ...patch }));
   }, []);
 
+  useEffect(() => {
+    if (state.step === "idle") return;
+    writeUiStateToLocation({
+      activeTab: state.activeTab,
+      selectedFile: state.selectedFile,
+      selectedIssueId: state.selectedIssueId,
+    });
+  }, [state.step, state.activeTab, state.selectedFile, state.selectedIssueId]);
+
   const handleAnalyze = useCallback(async ({ url, token, aiConfig, issueUrl }: SubmitPayload) => {
-    setState({ ...INITIAL_STATE, step: "fetching" });
+    const repoDefaults = loadRepoDefaults(getRepoKeyFromUrl(url));
+    setState({
+      ...createInitialState(),
+      step: "fetching",
+      activeTab: repoDefaults?.defaultTab ?? "summary",
+      reviewChat: [],
+    });
     setActiveAIConfig(aiConfig);
     setAnalysisUrl(url);
     setAnalysisToken(token);
@@ -92,7 +114,7 @@ function App() {
   }, [updateState]);
 
   const handleReset = useCallback(() => {
-    setState(INITIAL_STATE);
+    setState(createInitialState());
     setActiveAIConfig(null);
     setReviewLoading(false);
     setReqLoading(false);
@@ -107,11 +129,20 @@ function App() {
     setActiveAIConfig(entry.aiConfig);
     setAnalysisUrl(entry.url);
     setReviewLoading(false);
+    writeUiStateToLocation({
+      activeTab: entry.state.activeTab,
+      selectedFile: entry.state.selectedFile,
+      selectedIssueId: entry.state.selectedIssueId,
+    });
   }, []);
 
   const handleTabChange = useCallback((tab: "summary" | "flow" | "review" | "requirements" | "mr-description") => {
     updateState({ activeTab: tab });
-  }, [updateState]);
+    const repoKey = getRepoKeyFromUrl(analysisUrl);
+    if (repoKey) {
+      saveRepoDefaults(repoKey, { defaultTab: tab });
+    }
+  }, [updateState, analysisUrl]);
 
   const handleNotesChange = useCallback((notes: string) => {
     updateState({ reviewerNotes: notes });
@@ -132,7 +163,16 @@ function App() {
   const handleAIConfigChange = useCallback((config: AIConfig) => {
     setActiveAIConfig(config);
     saveAIConfig(config);
-  }, []);
+    const repoKey = getRepoKeyFromUrl(analysisUrl);
+    if (repoKey) {
+      saveRepoDefaults(repoKey, {
+        model: config.model,
+        customRules: config.customRules ?? "",
+        postingMode: config.postingMode ?? "inline",
+        lastPresetId: config.lastPresetId,
+      });
+    }
+  }, [analysisUrl]);
 
   const handleTriggerReview = useCallback(async () => {
     if (!state.mrData || !activeAIConfig || reviewLoading) return;
@@ -144,8 +184,15 @@ function App() {
     }
 
     try {
-      const codeReview = await analyzeCodeReview(state.mrData, activeAIConfig);
-      updateState({ codeReview, activeTab: "review" });
+      const codeReview = await analyzeCodeReview(state.mrData, activeAIConfig, analysisToken);
+      codeReview.reviewDiff = computeReviewDiff(state.codeReview, codeReview);
+      updateState({
+        codeReview,
+        activeTab: "review",
+        selectedIssueId: state.selectedIssueId && codeReview.issues.some((issue) => issue.id === state.selectedIssueId)
+          ? state.selectedIssueId
+          : codeReview.issues[0]?.id,
+      });
       toast.success("Code review complete!");
 
       // Update history with review
@@ -162,7 +209,26 @@ function App() {
     } finally {
       setReviewLoading(false);
     }
-  }, [state.mrData, activeAIConfig, reviewLoading, updateState]);
+  }, [state.mrData, state.codeReview, state.selectedIssueId, activeAIConfig, reviewLoading, updateState, analysisToken]);
+
+  const handleReviewChatChange = useCallback((messages: AnalysisState["reviewChat"]) => {
+    updateState({ reviewChat: messages });
+    setState((prev) => {
+      const updated = { ...prev, reviewChat: messages };
+      if (analysisUrl && activeAIConfig) {
+        saveAnalysis(analysisUrl, updated, activeAIConfig);
+      }
+      return updated;
+    });
+  }, [updateState, analysisUrl, activeAIConfig]);
+
+  const handleSelectedIssueChange = useCallback((selectedIssueId?: string) => {
+    updateState({ selectedIssueId });
+  }, [updateState]);
+
+  const handleSelectedFileChange = useCallback((selectedFile?: string) => {
+    updateState({ selectedFile });
+  }, [updateState]);
 
   const handleTriggerRequirements = useCallback(async () => {
     if (!state.mrData || !activeAIConfig || !issueData || reqLoading) return;
@@ -231,6 +297,9 @@ function App() {
           onTokenChange={handleTokenChange}
           onLoadHistory={handleLoadHistory}
           onAIConfigChange={handleAIConfigChange}
+          onReviewChatChange={handleReviewChatChange}
+          onSelectedIssueChange={handleSelectedIssueChange}
+          onSelectedFileChange={handleSelectedFileChange}
         />
       );
     }
@@ -269,6 +338,9 @@ function App() {
       onTokenChange={handleTokenChange}
       onLoadHistory={handleLoadHistory}
       onAIConfigChange={handleAIConfigChange}
+      onReviewChatChange={handleReviewChatChange}
+      onSelectedIssueChange={handleSelectedIssueChange}
+      onSelectedFileChange={handleSelectedFileChange}
     />
   );
 }

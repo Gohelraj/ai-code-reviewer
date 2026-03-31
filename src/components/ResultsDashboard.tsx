@@ -13,12 +13,13 @@ import { SummarySkeleton, FlowSkeleton } from "./Skeleton";
 import type { AIConfig } from "./AISettings";
 import { OPENROUTER_MODELS } from "./AISettings";
 import { ThemeToggle } from "./ThemeToggle";
-import { AISettings, saveAIConfig } from "./AISettings";
+import { AISettings } from "./AISettings";
 import { exportAsMarkdown, downloadMarkdown, exportAsJSON, downloadJSON } from "../lib/export";
 import { estimateCost, formatCost } from "../lib/cost";
 import { getHistory } from "../lib/history";
 import type { HistoryEntry } from "../lib/history";
 import { formatDistanceToNow } from "date-fns";
+import { getRepoKeyFromUrl } from "../lib/review-utils";
 
 interface ResultsDashboardProps {
   state: AnalysisState;
@@ -39,9 +40,12 @@ interface ResultsDashboardProps {
   onTokenChange?: (token: string) => void;
   onLoadHistory?: (entry: import("../lib/history").HistoryEntry) => void;
   onAIConfigChange?: (config: AIConfig) => void;
+  onReviewChatChange?: (messages: AnalysisState["reviewChat"]) => void;
+  onSelectedIssueChange?: (selectedIssueId?: string) => void;
+  onSelectedFileChange?: (selectedFile?: string) => void;
 }
 
-export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, reqLoading, mrDescLoading, onTriggerReview, onTriggerRequirements, onTriggerMRDescription, prUrl, prToken, onNotesChange, onTokenChange, onLoadHistory, onAIConfigChange }: ResultsDashboardProps) {
+export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, reqLoading, mrDescLoading, onTriggerReview, onTriggerRequirements, onTriggerMRDescription, prUrl, prToken, onNotesChange, onTokenChange, onLoadHistory, onAIConfigChange, onReviewChatChange, onSelectedIssueChange, onSelectedFileChange }: ResultsDashboardProps) {
   const { mrData, summary, executionFlow, codeReview, activeTab, requirementsCheck, mrDescriptionReview } = state;
   const modelLabel = aiConfig?.provider === "openrouter" && aiConfig.apiKey
     ? OPENROUTER_MODELS.find((m) => m.id === aiConfig.model)?.label ?? aiConfig.model
@@ -94,6 +98,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
   }, [summary, executionFlow, codeReview, requirementsCheck, mrDescriptionReview, state.linkedIssueUrl, activeTab, reviewLoading, isAnalyzing, onTabChange, onTriggerReview, onReset]);
 
   const handleFileClick = useCallback((filename: string) => {
+    onSelectedFileChange?.(filename);
     const tryScroll = () => {
       const el = document.querySelector(`[data-filename="${CSS.escape(filename)}"]`);
       if (el) {
@@ -132,7 +137,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
       }
     };
     requestAnimationFrame(retry);
-  }, [summary, codeReview, onTabChange]);
+  }, [summary, codeReview, onTabChange, onSelectedFileChange]);
 
   const handleExport = useCallback(() => {
     const md = exportAsMarkdown(state);
@@ -157,13 +162,18 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
   const [aiConfigOpen, setAiConfigOpen] = useState(false);
   const [localAIConfig, setLocalAIConfig] = useState<AIConfig | null>(aiConfig ?? null);
-  const [scrollToFile, setScrollToFile] = useState<string | null>(null);
+  const [scrollToFile, setScrollToFile] = useState<string | null>(state.selectedFile ?? null);
+  const repoKey = getRepoKeyFromUrl(prUrl ?? "");
 
   useEffect(() => {
     if (historyOpen) {
       getHistory().then((entries) => setHistoryEntries(entries.slice(0, 10)));
     }
   }, [historyOpen]);
+
+  useEffect(() => {
+    setScrollToFile(state.selectedFile ?? null);
+  }, [state.selectedFile]);
 
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
@@ -267,7 +277,26 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
           <FlowSkeleton />
         )}
         {activeTab === "review" && codeReview && (
-          <CodeReviewPanel review={codeReview} prUrl={prUrl} prToken={prToken} mrData={mrData} previousReview={state.previousReview} reviewLoading={reviewLoading} onTriggerReview={onTriggerReview} onTokenChange={onTokenChange} />
+          <CodeReviewPanel
+            review={codeReview}
+            prUrl={prUrl}
+            prToken={prToken}
+            mrData={mrData}
+            previousReview={state.previousReview}
+            reviewLoading={reviewLoading}
+            onTriggerReview={onTriggerReview}
+            onTokenChange={onTokenChange}
+            postingMode={aiConfig?.postingMode}
+            selectedIssueId={state.selectedIssueId}
+            selectedFile={state.selectedFile}
+            onSelectedIssueChange={onSelectedIssueChange}
+            onSelectedFileChange={onSelectedFileChange}
+            reviewChat={state.reviewChat ?? []}
+            onReviewChatChange={onReviewChatChange}
+            aiConfig={aiConfig ?? null}
+            requirementsCheck={requirementsCheck}
+            mrDescriptionReview={mrDescriptionReview}
+          />
         )}
         {activeTab === "review" && !codeReview && !reviewLoading && (
           <motion.div
@@ -465,7 +494,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
               </button>
             </div>
             <div className="max-h-[60vh] overflow-y-auto p-5">
-              <AISettings config={localAIConfig} onChange={setLocalAIConfig} />
+              <AISettings config={localAIConfig} onChange={setLocalAIConfig} repoKey={repoKey} />
             </div>
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-border bg-secondary/30">
               <p className="text-xs text-muted-foreground leading-relaxed">

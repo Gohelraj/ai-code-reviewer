@@ -3,12 +3,16 @@ import { motion } from "framer-motion";
 import {
   Shield, Zap, CheckCircle2, XCircle, AlertTriangle, MessageSquare,
   ChevronDown, ChevronUp, Copy, Check, Star, BookOpen, Lock, Gauge, Send, FileCode, MapPin,
-  Square, CheckSquare, ListChecks, EyeOff, Eye, ClipboardCopy, Play, RefreshCw, Key, Pencil
+  Square, CheckSquare, ListChecks, EyeOff, Eye, ClipboardCopy, Play, RefreshCw, Key, Pencil,
+  Bot, Sparkles, Wand2, GitCompareArrows
 } from "lucide-react";
 import toast from "react-hot-toast";
-import type { CodeReview, ReviewIssue, MRData } from "../types";
+import type { CodeReview, ReviewIssue, MRData, RequirementsCheck, MRDescriptionReview, ReviewChatMessage } from "../types";
 import { postReviewComment, postInlineComments, buildIssueMarkdown, type InlinePostResult } from "../lib/github-comment";
 import ConfirmModal from "./ConfirmModal";
+import type { AIConfig, PostingMode } from "./AISettings";
+import { askReviewQuestion, generateIssueFix } from "../lib/api";
+import { buildMergeReadinessGates } from "../lib/review-utils";
 
 interface CodeReviewPanelProps {
   review: CodeReview;
@@ -19,6 +23,16 @@ interface CodeReviewPanelProps {
   reviewLoading?: boolean;
   onTriggerReview?: () => void;
   onTokenChange?: (token: string) => void;
+  postingMode?: PostingMode;
+  selectedIssueId?: string;
+  selectedFile?: string;
+  onSelectedIssueChange?: (selectedIssueId?: string) => void;
+  onSelectedFileChange?: (selectedFile?: string) => void;
+  reviewChat?: ReviewChatMessage[];
+  onReviewChatChange?: (messages: ReviewChatMessage[]) => void;
+  aiConfig?: AIConfig | null;
+  requirementsCheck?: RequirementsCheck | null;
+  mrDescriptionReview?: MRDescriptionReview | null;
 }
 
 type SeverityConfigEntry = { icon: typeof XCircle; label: string; bg: string; border: string; text: string; badge: string };
@@ -97,6 +111,54 @@ function CodeBlock({ code, label, variant = "neutral" }: { code: string; label: 
   );
 }
 
+function ConfidenceBadge({ confidence }: { confidence: ReviewIssue["confidence"] }) {
+  const styles = confidence === "high"
+    ? "bg-accent/10 text-accent border-accent/20"
+    : confidence === "medium"
+    ? "bg-yellow-50 text-yellow-600 border-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20"
+    : "bg-muted text-muted-foreground border-border";
+
+  return (
+    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border ${styles}`}>
+      {confidence.toUpperCase()} CONF
+    </span>
+  );
+}
+
+function MergeReadinessPanel({
+  review,
+  requirementsCheck,
+  mrDescriptionReview,
+}: {
+  review: CodeReview;
+  requirementsCheck?: RequirementsCheck | null;
+  mrDescriptionReview?: MRDescriptionReview | null;
+}) {
+  const gates = buildMergeReadinessGates({ review, requirementsCheck, mrDescriptionReview });
+
+  return (
+    <div className="bg-card border border-border rounded-2xl p-5">
+      <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+        <GitCompareArrows size={14} />
+        Merge Readiness Gates
+      </h3>
+      <div className="space-y-2.5">
+        {gates.map((gate) => (
+          <div key={gate.label} className="flex items-start gap-3 rounded-xl border border-border bg-secondary/30 px-4 py-3">
+            <span className={`mt-0.5 inline-flex h-2.5 w-2.5 rounded-full ${
+              gate.status === "pass" ? "bg-accent" : gate.status === "warn" ? "bg-yellow-500" : "bg-destructive"
+            }`} />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-foreground">{gate.label}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{gate.detail}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Build markdown for a single issue */
 function buildSingleIssueMarkdown(issue: ReviewIssue): string {
   const sevEmoji = issue.severity === "critical" ? "🔴" : issue.severity === "warning" ? "🟡" : "🔵";
@@ -111,7 +173,11 @@ function buildSingleIssueMarkdown(issue: ReviewIssue): string {
     lines.push(`**Category:** ${issue.category}`);
     lines.push(``);
   }
+  lines.push(`**Confidence:** ${issue.confidence.toUpperCase()}`);
+  lines.push(``);
   lines.push(issue.description);
+  lines.push(``);
+  lines.push(`**Rationale:** ${issue.rationale}`);
   lines.push(``);
   if (issue.currentCode) {
     lines.push(`**Problematic Code:**`);
@@ -134,7 +200,7 @@ function buildSingleIssueMarkdown(issue: ReviewIssue): string {
   return lines.join("\n");
 }
 
-function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismiss, onRestore, posted, editedComment, onEditComment, onResetComment }: {
+function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismiss, onRestore, posted, editedComment, onEditComment, onResetComment, highlighted, onFocusIssue, generatedFix, fixLoading, onGenerateFix }: {
   issue: ReviewIssue;
   index: number;
   selected?: boolean;
@@ -146,12 +212,21 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
   editedComment?: string;
   onEditComment?: (markdown: string) => void;
   onResetComment?: () => void;
+  highlighted?: boolean;
+  onFocusIssue?: () => void;
+  generatedFix?: string;
+  fixLoading?: boolean;
+  onGenerateFix?: () => void;
 }) {
-  const [expanded, setExpanded] = useState(issue.severity === "critical" && !dismissed);
+  const [expanded, setExpanded] = useState(issue.severity === "critical" && !dismissed || !!highlighted);
   const [issueCopied, setIssueCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
   const isEdited = editedComment !== undefined;
+
+  useEffect(() => {
+    if (highlighted) setExpanded(true);
+  }, [highlighted]);
 
   // Extract title from edited markdown (first heading line: "#### emoji [SEV] Title")
   const displayTitle = isEdited
@@ -167,7 +242,8 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04, duration: 0.3 }}
       data-filename={issue.file}
-      className={`border rounded-2xl overflow-hidden ${config.border} bg-card ${issue.severity === "critical" && !dismissed ? "border-l-4 border-l-destructive" : ""} ${selected ? "ring-2 ring-primary/30" : ""} ${dismissed ? "opacity-50" : ""}`}
+      data-issue-id={issue.id}
+      className={`border rounded-2xl overflow-hidden ${config.border} bg-card ${issue.severity === "critical" && !dismissed ? "border-l-4 border-l-destructive" : ""} ${selected || highlighted ? "ring-2 ring-primary/30" : ""} ${dismissed ? "opacity-50" : ""}`}
     >
       <div className="flex items-start">
         {showCheckbox && (
@@ -184,7 +260,10 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
           </button>
         )}
         <button
-          onClick={() => setExpanded(!expanded)}
+          onClick={() => {
+            setExpanded(!expanded);
+            onFocusIssue?.();
+          }}
           className={`w-full flex items-start gap-3 ${showCheckbox ? "pl-2" : "px-5"} pr-5 py-4 hover:bg-secondary/30 transition-colors text-left`}
         >
         <Icon size={16} className={`flex-shrink-0 mt-0.5 ${config.text}`} />
@@ -196,6 +275,7 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
             <span className="text-xs text-muted-foreground px-2 py-0.5 rounded-md bg-secondary border border-border">
               {issue.category}
             </span>
+            <ConfidenceBadge confidence={issue.confidence} />
             {dismissed && (
               <span className="text-xs font-medium text-muted-foreground px-2 py-0.5 rounded-md bg-muted border border-border line-through">
                 Dismissed
@@ -287,6 +367,11 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
                 <p className="text-sm text-foreground leading-relaxed">{issue.description}</p>
               </div>
 
+              <div className="bg-secondary/40 rounded-xl px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Rationale</p>
+                <p className="text-sm text-foreground leading-relaxed">{issue.rationale}</p>
+              </div>
+
               {issue.currentCode && (
                 <CodeBlock code={issue.currentCode} label="Problematic Code" variant="destructive" />
               )}
@@ -300,6 +385,10 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Impact</p>
                   <p className="text-sm text-foreground leading-relaxed">{issue.impact}</p>
                 </div>
+              )}
+
+              {generatedFix && (
+                <CodeBlock code={generatedFix} label="Generated Fix Suggestion" variant="accent" />
               )}
             </>
           )}
@@ -396,6 +485,18 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
               >
                 <Pencil size={11} />
                 {editing ? "Close Editor" : isEdited ? "Edit (modified)" : "Edit Comment"}
+              </button>
+            )}
+            {issue.fixable && onGenerateFix && !dismissed && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onGenerateFix();
+                }}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-md hover:bg-secondary"
+              >
+                {fixLoading ? <RefreshCw size={11} className="animate-spin" /> : <Wand2 size={11} />}
+                {fixLoading ? "Generating..." : generatedFix ? "Regenerate Fix" : "Generate Fix"}
               </button>
             )}
             {dismissed && onRestore && (
@@ -549,7 +650,26 @@ function EditBeforePostModal({
   );
 }
 
-export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview, reviewLoading, onTriggerReview, onTokenChange }: CodeReviewPanelProps) {
+export function CodeReviewPanel({
+  review,
+  prUrl,
+  prToken,
+  mrData,
+  previousReview,
+  reviewLoading,
+  onTriggerReview,
+  onTokenChange,
+  postingMode = "inline",
+  selectedIssueId,
+  selectedFile,
+  onSelectedIssueChange,
+  onSelectedFileChange,
+  reviewChat = [],
+  onReviewChatChange,
+  aiConfig,
+  requirementsCheck,
+  mrDescriptionReview,
+}: CodeReviewPanelProps) {
   const [copied, setCopied] = useState(false);
   const [posting, setPosting] = useState(false);
   const [postingSelected, setPostingSelected] = useState(false);
@@ -566,6 +686,10 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
   const [confirmModal, setConfirmModal] = useState<{ title: string; message: string; confirmLabel: string; onConfirm: () => void } | null>(null);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [groupBy, setGroupBy] = useState<"severity" | "file">("severity");
+  const [generatedFixes, setGeneratedFixes] = useState<Record<string, string>>({});
+  const [loadingFixId, setLoadingFixId] = useState<string | null>(null);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
   const verdictConfig = VERDICT_CONFIG[review.overallVerdict] ?? DEFAULT_VERDICT;
   const VerdictIcon = verdictConfig.icon;
 
@@ -627,7 +751,11 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
           lines.push(`**Category:** ${issue.category}`);
           lines.push(``);
         }
+        lines.push(`**Confidence:** ${issue.confidence.toUpperCase()}`);
+        lines.push(``);
         lines.push(issue.description);
+        lines.push(``);
+        lines.push(`**Rationale:** ${issue.rationale}`);
         lines.push(``);
 
         if (issue.currentCode) {
@@ -702,6 +830,26 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
     lines.push(``);
     lines.push(review.testingAssessment);
     lines.push(``);
+    lines.push(`### 🧪 Test Gap Summary`);
+    lines.push(``);
+    lines.push(review.testGapSummary);
+    lines.push(``);
+    if (review.riskHotspots.length > 0) {
+      lines.push(`### 🔥 Risk Hotspots`);
+      lines.push(``);
+      for (const hotspot of review.riskHotspots) {
+        lines.push(`- **${hotspot.file}** (${hotspot.score}) — ${hotspot.reasons.join("; ")}`);
+      }
+      lines.push(``);
+    }
+    if (review.reviewerSuggestions && review.reviewerSuggestions.length > 0) {
+      lines.push(`### 👥 Reviewer Routing`);
+      lines.push(``);
+      for (const suggestion of review.reviewerSuggestions) {
+        lines.push(`- **${suggestion.reviewer}** — ${suggestion.files.join(", ")}`);
+      }
+      lines.push(``);
+    }
     lines.push(`### 🚀 Merge Readiness`);
     lines.push(``);
     lines.push(review.mergeReadiness);
@@ -753,6 +901,14 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
 
   const dismissedCount = dismissedIssues.size;
 
+  useEffect(() => {
+    if (!selectedIssueId) return;
+    const el = document.querySelector(`[data-issue-id="${CSS.escape(selectedIssueId)}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [selectedIssueId, filteredIssues.length, groupBy]);
+
   const doPostSelected = async (editedBodies?: Record<string, string>) => {
     if (!prUrl || !effectiveToken || selectedCount === 0) return;
     const selectedList = review.issues.filter((i) => selectedIssues.has(i.id));
@@ -764,6 +920,7 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
         issues: selectedList,
         diffRefs: mrData?.diffRefs,
         overrideBodies: editedBodies,
+        mode: postingMode,
       });
 
       if (result.postedIds.length > 0) {
@@ -800,6 +957,50 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
       bodies[issue.id] = editedComments[issue.id] ?? buildIssueMarkdown(issue);
     }
     setEditModal({ issues: selectedList, bodies });
+  };
+
+  const handleGenerateFix = async (issue: ReviewIssue) => {
+    if (!mrData || !aiConfig) {
+      toast.error("AI settings are required to generate a fix");
+      return;
+    }
+
+    setLoadingFixId(issue.id);
+    try {
+      const generatedFix = await generateIssueFix(mrData, issue, aiConfig, effectiveToken || undefined);
+      setGeneratedFixes((prev) => ({ ...prev, [issue.id]: generatedFix }));
+      toast.success("Generated a concrete fix suggestion");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to generate fix");
+    } finally {
+      setLoadingFixId(null);
+    }
+  };
+
+  const handleAskQuestion = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const question = chatInput.trim();
+    if (!question || !mrData || !aiConfig) return;
+
+    const nextMessages: ReviewChatMessage[] = [
+      ...reviewChat,
+      { role: "user", content: question, createdAt: Date.now() },
+    ];
+    onReviewChatChange?.(nextMessages);
+    setChatInput("");
+    setChatLoading(true);
+
+    try {
+      const response = await askReviewQuestion(mrData, aiConfig, question, effectiveToken || undefined);
+      onReviewChatChange?.([
+        ...nextMessages,
+        { role: "assistant", content: response, createdAt: Date.now() },
+      ]);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to ask review question");
+    } finally {
+      setChatLoading(false);
+    }
   };
 
   return (
@@ -941,6 +1142,79 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
               </div>
             )}
           </div>
+
+          {review.reviewDiff && previousReview && (
+            <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-2">
+                <GitCompareArrows size={14} />
+                Re-run Comparison
+              </h3>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="rounded-full bg-accent/10 text-accent px-2.5 py-1 border border-accent/20">
+                  {review.reviewDiff.scoreDelta >= 0 ? "+" : ""}{review.reviewDiff.scoreDelta} score delta
+                </span>
+                <span className="rounded-full bg-blue-50 text-blue-600 px-2.5 py-1 border border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20">
+                  {review.reviewDiff.addedIssueIds.length} added
+                </span>
+                <span className="rounded-full bg-muted text-muted-foreground px-2.5 py-1 border border-border">
+                  {review.reviewDiff.removedIssueIds.length} removed
+                </span>
+                <span className="rounded-full bg-yellow-50 text-yellow-600 px-2.5 py-1 border border-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20">
+                  {review.reviewDiff.changedSeverityIds.length} severity changes
+                </span>
+              </div>
+            </div>
+          )}
+
+          {review.testGapSummary && (
+            <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
+              <h3 className="text-sm font-semibold text-foreground mb-1">Test Gap Signal</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">{review.testGapSummary}</p>
+            </div>
+          )}
+
+          {review.riskHotspots.length > 0 && (
+            <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
+              <h3 className="text-sm font-semibold text-foreground mb-3">Risk Hotspots</h3>
+              <div className="space-y-2">
+                {review.riskHotspots.map((hotspot) => (
+                  <button
+                    key={hotspot.file}
+                    onClick={() => onSelectedFileChange?.(hotspot.file)}
+                    className="w-full text-left rounded-xl border border-border bg-card px-4 py-3 hover:bg-secondary/40 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-mono text-foreground truncate">{hotspot.file}</span>
+                      <span className="text-xs font-semibold text-destructive">Risk {hotspot.score}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">{hotspot.reasons.join(" · ")}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {review.reviewerSuggestions && review.reviewerSuggestions.length > 0 && (
+            <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
+              <h3 className="text-sm font-semibold text-foreground mb-3">Suggested Reviewers</h3>
+              <div className="space-y-2">
+                {review.reviewerSuggestions.map((suggestion) => (
+                  <div
+                    key={suggestion.reviewer}
+                    className="rounded-xl border border-border bg-card px-4 py-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-semibold text-foreground">{suggestion.reviewer}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {suggestion.files.length} owned file{suggestion.files.length === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1 break-words">{suggestion.files.join(" · ")}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1050,6 +1324,14 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
                   editedComment={editedComments[issue.id]}
                   onEditComment={prUrl ? (md) => setEditedComments((prev) => ({ ...prev, [issue.id]: md })) : undefined}
                   onResetComment={() => setEditedComments((prev) => { const next = { ...prev }; delete next[issue.id]; return next; })}
+                  highlighted={selectedIssueId === issue.id}
+                  onFocusIssue={() => {
+                    onSelectedIssueChange?.(issue.id);
+                    onSelectedFileChange?.(issue.file);
+                  }}
+                  generatedFix={generatedFixes[issue.id]}
+                  fixLoading={loadingFixId === issue.id}
+                  onGenerateFix={issue.fixable ? () => handleGenerateFix(issue) : undefined}
                 />
               ))}
             </div>
@@ -1082,6 +1364,14 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
                         editedComment={editedComments[issue.id]}
                         onEditComment={prUrl ? (md) => setEditedComments((prev) => ({ ...prev, [issue.id]: md })) : undefined}
                         onResetComment={() => setEditedComments((prev) => { const next = { ...prev }; delete next[issue.id]; return next; })}
+                        highlighted={selectedIssueId === issue.id}
+                        onFocusIssue={() => {
+                          onSelectedIssueChange?.(issue.id);
+                          onSelectedFileChange?.(issue.file);
+                        }}
+                        generatedFix={generatedFixes[issue.id]}
+                        fixLoading={loadingFixId === issue.id}
+                        onGenerateFix={issue.fixable ? () => handleGenerateFix(issue) : undefined}
                       />
                     ))}
                   </div>
@@ -1270,6 +1560,58 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
             <h3 className={`text-sm font-semibold mb-2 ${verdictConfig.color}`}>Merge Readiness</h3>
             <p className="text-sm text-foreground leading-relaxed">{review.mergeReadiness}</p>
           </div>
+        </div>
+
+        <MergeReadinessPanel
+          review={review}
+          requirementsCheck={requirementsCheck}
+          mrDescriptionReview={mrDescriptionReview}
+        />
+
+        <div className="bg-card border border-border rounded-2xl p-6">
+          <h3 className="text-base font-semibold text-foreground mb-4 flex items-center gap-2">
+            <Bot size={16} />
+            Ask This PR
+          </h3>
+          <div className="space-y-3">
+            {reviewChat.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                Ask focused follow-up questions about the changed code, review findings, or risky files.
+              </p>
+            )}
+            {reviewChat.map((message, index) => (
+              <div
+                key={`${message.createdAt}-${index}`}
+                className={`rounded-2xl border px-4 py-3 ${
+                  message.role === "assistant"
+                    ? "bg-secondary/40 border-border"
+                    : "bg-card border-accent/20"
+                }`}
+              >
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                  {message.role === "assistant" ? "AI reviewer" : "You"}
+                </p>
+                <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
+              </div>
+            ))}
+          </div>
+          <form onSubmit={handleAskQuestion} className="mt-4 flex items-end gap-3">
+            <textarea
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              placeholder="Ask about auth risk, risky files, missing tests, or a specific issue."
+              rows={3}
+              className="flex-1 rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground resize-y focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all"
+            />
+            <button
+              type="submit"
+              disabled={chatLoading || !chatInput.trim() || !aiConfig}
+              className="flex items-center gap-2 rounded-xl bg-foreground text-background px-4 py-3 text-sm font-semibold hover:bg-foreground/90 transition-colors disabled:opacity-50"
+            >
+              {chatLoading ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              Ask
+            </button>
+          </form>
         </div>
       </div>
 

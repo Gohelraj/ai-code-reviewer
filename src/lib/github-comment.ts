@@ -31,7 +31,7 @@ function parseGitLabUrl(url: string): { projectPath: string; mrIid: string } | n
  * Parse a lineHint string (e.g. "Line 42", "L42", "Lines 10-20", "line 5")
  * into the first numeric line number. Returns null if unparseable.
  */
-function parseLineNumber(lineHint: string): number | null {
+export function parseLineNumber(lineHint: string): number | null {
   // Match patterns like "Line 42", "L42", "line 42", "Lines 10-20" (takes first number)
   const match = lineHint.match(/(?:lines?\s*|L)(\d+)/i);
   if (match) return parseInt(match[1], 10);
@@ -134,12 +134,14 @@ export async function postInlineComments({
   issues,
   diffRefs,
   overrideBodies,
+  mode = "inline",
 }: {
   url: string;
   token: string;
   issues: ReviewIssue[];
   diffRefs?: DiffRefs;
   overrideBodies?: Record<string, string>;
+  mode?: "inline" | "general";
 }): Promise<InlinePostResult> {
   const result: InlinePostResult = { total: issues.length, inline: 0, general: 0, failed: 0, errors: [], postedIds: [] };
 
@@ -155,7 +157,7 @@ export async function postInlineComments({
       if (gitlab) {
         const encodedPath = encodeURIComponent(gitlab.projectPath);
 
-        if (hasPosition && diffRefs) {
+        if (mode === "inline" && hasPosition && diffRefs) {
           // Post as inline discussion with position
           const res = await fetch(
             `/api/gitlab/api/v4/projects/${encodedPath}/merge_requests/${gitlab.mrIid}/discussions`,
@@ -218,7 +220,7 @@ export async function postInlineComments({
         }
       } else if (github) {
         // GitHub: use pull request review comments API for inline, issues comments for general
-        if (hasPosition) {
+        if (mode === "inline" && hasPosition) {
           const res = await fetch(
             `https://api.github.com/repos/${github.owner}/${github.repo}/pulls/${github.number}/comments`,
             {

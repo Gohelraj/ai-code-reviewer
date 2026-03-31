@@ -84,17 +84,25 @@ export interface ReviewIssue {
   category: string;
   title: string;
   description: string;
+  confidence: "low" | "medium" | "high";
+  rationale: string;
   file?: string;
   lineHint?: string;
   currentCode?: string;
   suggestedFix: string;
   impact?: string;
+  fixable?: boolean;
 }
 
 export interface ArchitectureObservation {
   aspect: string;
   observation: string;
   recommendation: string;
+}
+
+export interface ReviewerSuggestion {
+  reviewer: string;
+  files: string[];
 }
 
 export interface CodeReview {
@@ -107,6 +115,10 @@ export interface CodeReview {
   securityConsiderations: string[];
   performanceConsiderations: string[];
   testingAssessment: string;
+  testGapSummary: string;
+  riskHotspots: Array<{ file: string; score: number; reasons: string[] }>;
+  reviewerSuggestions?: ReviewerSuggestion[];
+  reviewDiff?: { addedIssueIds: string[]; removedIssueIds: string[]; changedSeverityIds: string[]; scoreDelta: number };
   mergeReadiness: string;
 }
 
@@ -144,6 +156,12 @@ export interface MRDescriptionReview {
   suggestedDescription: string;
 }
 
+export interface ReviewChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  createdAt: number;
+}
+
 export interface AnalysisState {
   step: AnalysisStep;
   mrData: MRData | null;
@@ -162,4 +180,10 @@ export interface AnalysisState {
   mrDescriptionReview?: MRDescriptionReview | null;
   /** Linked GitLab/GitHub issue URL */
   linkedIssueUrl?: string;
+  /** Conversation about the current PR review */
+  reviewChat?: ReviewChatMessage[];
+  /** Currently highlighted file in the UI */
+  selectedFile?: string;
+  /** Currently highlighted review issue in the UI */
+  selectedIssueId?: string;
 }

@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { GitPullRequest, Key, ChevronDown, ChevronUp, Sparkles, GitBranch, ArrowRight, Shield, FileText, Search, Layers, Clock, Trash2, ListChecks } from "lucide-react";
-import { AISettings, loadAIConfig } from "./AISettings";
+import { AISettings, loadAIConfig, resolveAIConfigForRepo } from "./AISettings";
 import type { AIConfig } from "./AISettings";
 import { ThemeToggle } from "./ThemeToggle";
 import { getHistory, deleteAnalysis } from "../lib/history";
 import type { HistoryEntry } from "../lib/history";
 import { formatDistanceToNow } from "date-fns";
+import { getRepoKeyFromUrl } from "../lib/review-utils";
 
 export interface SubmitPayload {
   url: string;
@@ -36,10 +37,15 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
   const [issueUrl, setIssueUrl] = useState("");
   const [aiConfig, setAiConfig] = useState<AIConfig>(loadAIConfig);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const repoKey = getRepoKeyFromUrl(url);
 
   useEffect(() => {
     getHistory().then((entries) => setHistory(entries.slice(0, 5)));
   }, []);
+
+  useEffect(() => {
+    setAiConfig((current) => resolveAIConfigForRepo(current, repoKey));
+  }, [repoKey]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -167,7 +173,7 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
               </div>
 
               {/* AI Settings */}
-              <AISettings config={aiConfig} onChange={setAiConfig} disabled={isLoading} />
+              <AISettings config={aiConfig} onChange={setAiConfig} disabled={isLoading} repoKey={repoKey} />
 
               {/* Linked Issue (optional — always visible) */}
               <div>

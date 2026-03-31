@@ -1,212 +1,181 @@
 # AI Code Reviewer
 
-A self-hosted, AI-powered code review tool for **GitHub Pull Requests** and **GitLab Merge Requests**. Paste a PR/MR link, get instant change summaries, execution flow diagrams, and a comprehensive senior-level code review — then selectively post issues as inline comments back to your MR.
+A browser-first code review workspace for GitHub pull requests and GitLab merge requests. Paste a PR/MR URL, bring your own OpenRouter key, and get structured review outputs without standing up a heavyweight backend.
 
-> **BYOK (Bring Your Own Key)** — Uses [OpenRouter](https://openrouter.ai) so you pick the model (Claude, GPT, Gemini, Llama, etc.) and pay only for what you use.
+The app is intentionally client-heavy:
 
----
+- Summary and execution-flow analysis run automatically after the diff is fetched.
+- Full code review, requirements checking, and MR description review are manual so teams can control API spend.
+- GitLab API requests go through a tiny local/prod proxy because GitLab does not expose permissive CORS headers.
+- OpenRouter requests are made from the browser with your saved local settings.
 
-## Features
+## What It Does
 
-### Core Analysis
+- Change summary with purpose, scope, impact, tech stack, and breaking-change detection
+- Execution-flow view grouped by architectural layers
+- Senior-style code review with score, verdict, strengths, issues, security/performance notes, and merge-readiness guidance
+- Trust signals on every issue: `confidence`, `rationale`, and optional fix generation
+- Re-run comparison with score delta, added findings, removed findings, and severity changes
+- Test-gap detection and file-level risk hotspots
+- Reviewer routing suggestions from `CODEOWNERS` when the target repo exposes one
+- “Ask This PR” follow-up chat grounded in the diff and fetched file context
+- Linked issue requirements checking for GitHub issues and GitLab issues/work items
+- MR description review with suggested rewritten copy
+- Selective posting back to GitHub/GitLab as inline or general comments
+- Local history, repo-aware presets, per-repo defaults, and deep-linkable result state
 
-| Feature                  | Description                                                                                                                                                         |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Change Summary**       | AI-generated purpose, scope, key changes with impact levels, tech stack detection, breaking change alerts                                                           |
-| **Execution Flow**       | Architectural layer grouping of changed files with entry points and data flow. Interactive **ReactFlow diagram** with dagre auto-layout                             |
-| **Code Review**          | Senior-engineer-level review with overall score (0–10), verdict, issues, strengths, architecture/security/performance observations, testing & merge readiness       |
-| **Context-Aware Review** | Fetches full file content (not just diffs) so the AI catches issues spanning the entire file — wrong arguments, duplicate logic, naming violations, type mismatches |
+## Runtime Model
 
-### Review Workflow
+1. Paste a GitHub PR or GitLab MR URL.
+2. The app fetches MR metadata plus changed-file diffs.
+3. Summary and execution flow run automatically from diff-only context.
+4. Code review runs on demand and lazily hydrates full file contents for richer review context.
+5. Optional follow-up tools such as requirements check, MR description review, PR chat, fix generation, and comment posting run only when requested.
 
-| Feature                           | Description                                                                                                                                                                                             |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Per-Issue Checkboxes**          | Select individual issues to post — don't flood the MR with noise                                                                                                                                        |
-| **Inline GitLab/GitHub Comments** | Posts selected issues as **line-level inline comments** using the GitLab Discussions API (with position) or GitHub PR Review Comments API. Falls back to general comments when line info is unavailable |
-| **Dismiss / False Positive**      | Mark issues as dismissed. They fade out, get excluded from selection, and can be restored anytime                                                                                                       |
-| **Copy Single Issue as MD**       | One-click copy of any issue as formatted markdown for pasting into Slack, Jira, or anywhere                                                                                                             |
-| **Copy Full Review as MD**        | Copies the entire review as GitLab/GitHub-compatible markdown with code fences, severity emojis, all sections                                                                                           |
-| **Post Full Review**              | Post the complete review as a single MR/PR comment                                                                                                                                                      |
-| **Re-run Review**                 | Re-run the code review and see a score comparison (↑/↓) vs the previous run                                                                                                                             |
-| **Custom Review Rules**           | Add team-specific rules (e.g. "flag console.log", "enforce camelCase") that get injected into the AI prompt                                                                                             |
-| **Reviewer Notes**                | Free-text notepad per MR, auto-saved to history                                                                                                                                                         |
+That split is deliberate: summary/flow stay fast, while the more expensive review operations fetch deeper context only when needed.
 
-### UI & UX
+## Key Features
 
-| Feature                         | Description                                                                                                 |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| **24 AI Models**                | Claude Sonnet/Opus 4.6, GPT-5.3, Gemini 2.5, DeepSeek, Llama 4, Grok 3, and more                            |
-| **Dark / Light / System Theme** | Full theme support with smooth transitions                                                                  |
-| **Keyboard Shortcuts**          | `1`/`2`/`3` for tabs, `R` to run review, `Esc` to go back                                                   |
-| **File Tree Sidebar**           | Collapsible sidebar showing changed files grouped by directory, with status icons and per-file issue counts |
-| **Severity Filters**            | Filter issues by Critical / Warning / Suggestion with one-click toggles                                     |
-| **Group by File / Severity**    | Toggle between grouping issues by severity or by file                                                       |
-| **Syntax-Highlighted Diffs**    | Powered by Shiki with line numbers, inline/split view, and collapsible file sections                        |
-| **Flow Diagram**                | Interactive ReactFlow + dagre diagram showing architectural layers and file dependencies                    |
-| **Cost Estimator**              | Shows estimated token cost per model in the stats bar                                                       |
-| **Review History**              | IndexedDB-backed history of recent reviews, loadable from the landing page                                  |
-| **Export as Markdown**          | Download the full analysis as a `.md` file                                                                  |
-| **Print**                       | Print-friendly output                                                                                       |
-| **Skeleton Loaders**            | Smooth loading states while AI processes                                                                    |
-| **Toast Notifications**         | Success/error feedback for all actions                                                                      |
-| **Mobile Responsive**           | Works on tablets and phones                                                                                 |
+### Review Trust
 
----
+- Issue confidence levels: `low`, `medium`, `high`
+- Per-issue rationale for why a finding matters in this specific change
+- Merge-readiness gates derived from score, critical issues, test-gap signal, requirements coverage, and MR description quality
+- Review rerun comparison to see whether things actually improved
+
+### Team Workflow
+
+- Save named presets for model, custom rules, and posting mode
+- Store repo-specific defaults such as default tab, posting preference, and active preset
+- Reviewer suggestions from `CODEOWNERS`
+- Export results as Markdown or JSON
+
+### UX
+
+- Inline, split, and full-file diff viewing
+- Review history stored locally in IndexedDB
+- Deep links for tab, file, and issue state via URL params
+- Dark, light, and system theme support
+- Keyboard shortcuts in the results view
 
 ## Tech Stack
 
-- **Frontend**: React 18, TypeScript 5.9, Vite 7
-- **Styling**: Tailwind CSS 3.3, Framer Motion
-- **Icons**: Lucide React
-- **Diagrams**: @xyflow/react + @dagrejs/dagre
-- **Syntax Highlighting**: Shiki
-- **State**: React hooks + TanStack React Query
-- **Storage**: IndexedDB (review history), localStorage (AI settings)
-- **Backend**: Express 5 (static files + GitLab CORS proxy)
-- **AI**: OpenRouter API (browser-side, BYOK)
-
----
+- React 19
+- TypeScript 5
+- Vite 7
+- Tailwind CSS + Framer Motion
+- Shiki for code highlighting
+- Express 5 + `http-proxy-middleware` for GitLab proxying in production
+- IndexedDB for analysis history
+- localStorage for AI settings and repo defaults
+- Vitest + Testing Library for the test suite
 
 ## Getting Started
 
 ### Prerequisites
 
-- **Node.js 20+** (tested with 22.x)
-- **npm** (comes with Node.js)
-- An **OpenRouter API key** — get one free at [openrouter.ai/keys](https://openrouter.ai/keys)
+- Node.js 20+
+- npm
+- An OpenRouter API key
 
-### Local Development
+### Install
 
 ```bash
-# Clone the repo
-git clone https://github.com/your-username/ai-code-reviewer.git
-cd ai-code-reviewer
-
-# Install dependencies
 npm install
+```
 
-# Start dev server (with hot reload)
+### Develop
+
+```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), enter your OpenRouter API key in the AI Settings panel, paste a PR/MR URL, and go.
+The Vite dev server runs on [http://localhost:3000](http://localhost:3000).
+
+### Test and Validate
+
+```bash
+npm run lint:types
+npm run test:run
+npm run check
+```
+
+`npm run check` runs typecheck, CSS lint, and the Vitest suite.
 
 ### Production Build
 
 ```bash
-# Build the frontend
 npm run build
-
-# Start the production server
 npm start
 ```
 
-The production server serves the built frontend and proxies GitLab API requests (needed because GitLab doesn't send CORS headers). Runs on port 3000 by default — override with `PORT=8080 npm start`.
-
----
+`npm start` serves the built SPA and exposes the GitLab proxy on the same origin. The default port is `3000`; override it with `PORT`.
 
 ## Docker
 
-### Using Docker Compose (recommended)
-
 ```bash
-# Build and start
 docker compose up -d
-
-# View logs
-docker compose logs -f
-
-# Stop
-docker compose down
 ```
 
-The app will be available at [http://localhost:3000](http://localhost:3000).
-
-### Using Docker directly
+Or:
 
 ```bash
-# Build the image
 docker build -t ai-code-reviewer .
-
-# Run the container
 docker run -d -p 3000:3000 --name ai-code-reviewer ai-code-reviewer
 ```
 
-Override the port:
+## Configuration Notes
 
-```bash
-docker run -d -p 8080:8080 -e PORT=8080 --name ai-code-reviewer ai-code-reviewer
+- OpenRouter keys are used from the browser. If you save AI settings, they are stored in localStorage on that machine.
+- GitHub/GitLab access tokens are session input only and are used for private repos or comment posting.
+- GitLab API access is proxied through `/api/gitlab` in dev and production.
+
+## Repository Structure
+
+```text
+src/
+  components/
+    AISettings.tsx
+    ChangeSummaryPanel.tsx
+    CodeReviewPanel.tsx
+    DiffViewer.tsx
+    ExecutionFlowPanel.tsx
+    InputForm.tsx
+    ResultsDashboard.tsx
+  lib/
+    api.ts
+    codeowners.ts
+    export.ts
+    github-comment.ts
+    highlighter.ts
+    history.ts
+    review-utils.ts
+  App.tsx
+  main.tsx
+server.js
+vite.config.ts
+vitest.config.ts
 ```
 
----
+## Current Limitations
 
-## Environment Variables
+- This is still a local/browser-side product. There is no org backend, shared multi-user storage, or server-side AI mode.
+- Reviewer routing depends on a readable `CODEOWNERS` file in the target repository and current branch.
+- GitHub/GitLab fetching currently targets the common public-hosted URL shapes in the UI.
+- Shiki support is intentionally trimmed to common review languages to keep bundle size more manageable.
 
-| Variable | Default | Description                |
-| -------- | ------- | -------------------------- |
-| `PORT`   | `3000`  | Port the server listens on |
+## Scripts
 
-> **Note**: The OpenRouter API key is entered in the browser UI and sent directly from the browser to OpenRouter. It is **never** sent to or stored on the server.
-
----
-
-## Project Structure
-
-```
-ai-code-reviewer/
-├── src/
-│   ├── components/
-│   │   ├── AISettings.tsx         # Model selector, API key, custom rules
-│   │   ├── AnalysisProgress.tsx   # Progress bar during analysis
-│   │   ├── ChangeSummaryPanel.tsx # Change summary with diff viewer
-│   │   ├── CodeReviewPanel.tsx    # Review verdict, issues, checkboxes, post to MR
-│   │   ├── DiffViewer.tsx         # Shiki-powered syntax-highlighted diffs
-│   │   ├── ExecutionFlowPanel.tsx # Execution flow list + diagram toggle
-│   │   ├── FileTreeSidebar.tsx    # File tree sidebar with issue counts
-│   │   ├── FlowDiagram.tsx        # ReactFlow + dagre interactive diagram
-│   │   ├── InputForm.tsx          # Landing page with URL input + history
-│   │   ├── ResultsDashboard.tsx   # Tabbed results with stats, notes, sidebar
-│   │   └── ThemeToggle.tsx        # Dark/light/system toggle
-│   ├── lib/
-│   │   ├── api.ts                 # GitHub/GitLab fetching + OpenRouter AI calls
-│   │   ├── cost.ts                # Token/cost estimation per model
-│   │   ├── export.ts              # Markdown export
-│   │   ├── github-comment.ts      # Post inline/general comments to GitHub/GitLab
-│   │   ├── highlighter.ts         # Shiki singleton
-│   │   ├── history.ts             # IndexedDB CRUD for review history
-│   │   └── useDarkMode.ts         # Theme hook
-│   ├── types.ts                   # All TypeScript interfaces
-│   ├── App.tsx                    # Main app with state machine
-│   └── main.tsx                   # Entry point
-├── server.js                      # Production Express server + GitLab proxy
-├── vite.config.ts                 # Vite config with dev proxy
-├── Dockerfile                     # Multi-stage Docker build
-├── docker-compose.yml             # One-command Docker deployment
-└── package.json
-```
-
----
-
-## How It Works
-
-1. **Paste a PR/MR URL** — supports GitHub (`/pull/123`) and GitLab (`/-/merge_requests/123`)
-2. **Fetches diff + full file content** via GitHub REST API or GitLab API (through the CORS proxy)
-3. **AI analysis runs in parallel**: Change Summary + Execution Flow (then Code Review on demand)
-4. **All AI calls go directly from the browser to OpenRouter** — the server only serves static files and proxies GitLab
-5. **Review results** show issues with file locations, code snippets, and suggested fixes
-6. **Select & post** individual issues as inline comments on the MR/PR
-
----
+- `npm run dev` - start Vite dev server
+- `npm run build` - create production build
+- `npm run preview` - preview the built app
+- `npm start` - serve `dist/` with the Express proxy
+- `npm run lint:types` - run `tsc --noEmit`
+- `npm run lint:css` - run stylelint on `src/**/*.css`
+- `npm run test` - start Vitest in watch mode
+- `npm run test:run` - run Vitest once
+- `npm run check` - run typecheck, CSS lint, and tests
 
 ## License
 
 MIT
-
-## How It Works
-
-The detection happens during the `npm run lint` command, which will:
-- Exit with error code 1 if undefined variables are found
-- Show exactly which variables need to be added to your CSS file
-- Integrate seamlessly with your development workflow
-
-This prevents runtime CSS issues where Tailwind classes reference undefined CSS variables.

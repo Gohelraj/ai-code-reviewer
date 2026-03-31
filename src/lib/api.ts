@@ -1,11 +1,13 @@
 import type { MRData, ChangeSummary, ExecutionFlow, CodeReview, RequirementsCheck, MRDescriptionReview, FileDiff, PRInfo } from "../types";
 import type { AIConfig } from "../components/AISettings";
+import { computeRiskHotspots, computeTestGapSummary } from "./review-utils";
+import { buildReviewerSuggestions, parseCodeowners } from "./codeowners";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
 // ─── GitHub direct (CORS: access-control-allow-origin: *) ────────────────────
 
-function parseGitHubUrl(url: string): { owner: string; repo: string; prNumber: string } | null {
+export function parseGitHubUrl(url: string): { owner: string; repo: string; prNumber: string } | null {
   const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
   if (match) return { owner: match[1], repo: match[2], prNumber: match[3] };
   return null;
@@ -60,20 +62,6 @@ async function fetchGitHubPR(url: string, token?: string): Promise<MRData> {
     changes: number; patch?: string; blob_url?: string; raw_url?: string;
   };
 
-  // Fetch full file content for context-aware review (cap each file at 30k chars)
-  const PER_FILE_CAP = 30_000;
-  const contentResults = await Promise.allSettled(
-    (files as GHFile[]).map(async (f) => {
-      if (!f.raw_url || f.status === "removed") return null;
-      try {
-        const res = await fetch(f.raw_url, { headers });
-        if (!res.ok) return null;
-        const text = await res.text();
-        return text.length <= PER_FILE_CAP ? text : text.slice(0, PER_FILE_CAP) + "\n// ... (file truncated — too large)";
-      } catch { return null; }
-    })
-  );
-
   return {
     platform: "github",
     pr: prInfo,
@@ -85,7 +73,7 @@ async function fetchGitHubPR(url: string, token?: string): Promise<MRData> {
       changes: f.changes,
       patch: f.patch ?? null,
       blobUrl: f.blob_url ?? null,
-      fullContent: contentResults[i].status === "fulfilled" ? contentResults[i].value : null,
+      fullContent: null,
     })),
   };
 }
@@ -94,7 +82,7 @@ async function fetchGitHubPR(url: string, token?: string): Promise<MRData> {
 // Dev:  Vite proxies /api/gitlab → https://gitlab.com  (see vite.config.ts)
 // Prod: server.js proxies /api/gitlab → https://gitlab.com
 
-function parseGitLabUrl(url: string): { projectPath: string; mrIid: string } | null {
+export function parseGitLabUrl(url: string): { projectPath: string; mrIid: string } | null {
   const match = url.match(/gitlab\.com\/(.+?)\/-\/merge_requests\/(\d+)/);
   if (match) return { projectPath: match[1], mrIid: match[2] };
   return null;
@@ -167,27 +155,9 @@ async function fetchGitLabMR(url: string, token?: string): Promise<MRData> {
       headSha: mr.diff_refs.head_sha,
       startSha: mr.diff_refs.start_sha,
     } : undefined,
-    files: await Promise.all(changes.map(async (c, i) => {
+    files: await Promise.all(changes.map(async (c) => {
       const additions = c.additions ?? (c.diff ? parseDiffStats(c.diff).additions : 0);
       const deletions = c.deletions ?? (c.diff ? parseDiffStats(c.diff).deletions : 0);
-
-      // Fetch full file content for context-aware review
-      let fullContent: string | null = null;
-      if (!c.deleted_file && c.new_path) {
-        try {
-          const encodedFile = encodeURIComponent(c.new_path);
-          const ref = encodeURIComponent(mr.source_branch);
-          const rawRes = await fetch(
-            `/api/gitlab/api/v4/projects/${encodedPath}/repository/files/${encodedFile}/raw?ref=${ref}`,
-            { headers }
-          );
-          if (rawRes.ok) {
-            const text = await rawRes.text();
-            const PER_FILE_CAP = 30_000;
-            fullContent = text.length <= PER_FILE_CAP ? text : text.slice(0, PER_FILE_CAP) + "\n// ... (file truncated — too large)";
-          }
-        } catch { /* leave fullContent null */ }
-      }
 
       return {
         filename: c.new_path,
@@ -197,7 +167,7 @@ async function fetchGitLabMR(url: string, token?: string): Promise<MRData> {
         changes: additions + deletions,
         patch: c.diff ?? null,
         blobUrl: null,
-        fullContent,
+        fullContent: null,
       };
     })),
   };
@@ -336,13 +306,16 @@ const REVIEW_SCHEMA: Record<string, unknown> = {
           category: { type: "string" },
           title: { type: "string" },
           description: { type: "string" },
+          confidence: { type: "string", enum: ["low", "medium", "high"] },
+          rationale: { type: "string" },
           file: { type: "string" },
           lineHint: { type: "string" },
           currentCode: { type: "string" },
           suggestedFix: { type: "string" },
           impact: { type: "string" },
+          fixable: { type: "boolean" },
         },
-        required: ["id", "severity", "category", "title", "description", "file", "lineHint", "currentCode", "suggestedFix", "impact"],
+        required: ["id", "severity", "category", "title", "description", "confidence", "rationale", "file", "lineHint", "currentCode", "suggestedFix", "impact", "fixable"],
         additionalProperties: false,
       },
     },
@@ -362,9 +335,23 @@ const REVIEW_SCHEMA: Record<string, unknown> = {
     securityConsiderations: { type: "array", items: { type: "string" } },
     performanceConsiderations: { type: "array", items: { type: "string" } },
     testingAssessment: { type: "string" },
+    testGapSummary: { type: "string" },
+    riskHotspots: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          file: { type: "string" },
+          score: { type: "number" },
+          reasons: { type: "array", items: { type: "string" } },
+        },
+        required: ["file", "score", "reasons"],
+        additionalProperties: false,
+      },
+    },
     mergeReadiness: { type: "string" },
   },
-  required: ["overallVerdict", "overallScore", "executiveSummary", "strengths", "issues", "architectureObservations", "securityConsiderations", "performanceConsiderations", "testingAssessment", "mergeReadiness"],
+  required: ["overallVerdict", "overallScore", "executiveSummary", "strengths", "issues", "architectureObservations", "securityConsiderations", "performanceConsiderations", "testingAssessment", "testGapSummary", "riskHotspots", "mergeReadiness"],
   additionalProperties: false,
 };
 
@@ -375,7 +362,7 @@ const PER_FILE_FULL_CAP  = 25_000;  // max full-content chars per file (review)
 const TOTAL_CONTEXT_CAP  = 120_000; // total review context budget (~30k tokens)
 
 /** Used for summary + flow: full diffs, no file content */
-function buildDiffContent(files: FileDiff[]): string {
+export function buildDiffContent(files: FileDiff[]): string {
   return files
     .map((f) => {
       const patch = f.patch
@@ -390,7 +377,7 @@ function buildDiffContent(files: FileDiff[]): string {
  * Used for code review: full file content + diff per changed file.
  * Files sorted by change size (most-changed first). Respects total token budget.
  */
-function buildContextAwareDiff(files: FileDiff[]): string {
+export function buildContextAwareDiff(files: FileDiff[]): string {
   const sorted = [...files].sort((a, b) => (b.additions + b.deletions) - (a.additions + a.deletions));
   let budget = TOTAL_CONTEXT_CAP;
   const parts: string[] = [];
@@ -428,6 +415,175 @@ export async function fetchMRDiff(url: string, token?: string): Promise<MRData> 
   if (parseGitHubUrl(url)) return fetchGitHubPR(url, token);
   if (parseGitLabUrl(url)) return fetchGitLabMR(url, token);
   throw new Error("Invalid URL. Please provide a GitHub Pull Request or GitLab Merge Request URL.");
+}
+
+function getRelevantFileContext(mrData: MRData, targetFile?: string): string {
+  const files = targetFile
+    ? mrData.files.filter((file) => file.filename === targetFile)
+    : mrData.files;
+  return buildContextAwareDiff(files.length > 0 ? files : mrData.files);
+}
+
+const CODEOWNERS_CANDIDATE_PATHS = [
+  "CODEOWNERS",
+  ".github/CODEOWNERS",
+  ".gitlab/CODEOWNERS",
+  "docs/CODEOWNERS",
+] as const;
+
+async function hydrateGitHubFullContent(mrData: MRData, token?: string): Promise<FileDiff[]> {
+  const parsed = parseGitHubUrl(mrData.pr.url);
+  if (!parsed) return mrData.files;
+
+  const { owner, repo, prNumber } = parsed;
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "AI-Code-Reviewer/1.0",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const filesRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`, { headers });
+  if (!filesRes.ok) return mrData.files;
+
+  type GHFile = { filename: string; raw_url?: string; status: string };
+  const files = await filesRes.json() as GHFile[];
+  const PER_FILE_CAP = 30_000;
+  const contentByFile = new Map<string, string | null>();
+
+  await Promise.all(
+    files.map(async (file) => {
+      if (!file.raw_url || file.status === "removed") {
+        contentByFile.set(file.filename, null);
+        return;
+      }
+      try {
+        const res = await fetch(file.raw_url, { headers });
+        if (!res.ok) {
+          contentByFile.set(file.filename, null);
+          return;
+        }
+        const text = await res.text();
+        contentByFile.set(
+          file.filename,
+          text.length <= PER_FILE_CAP ? text : `${text.slice(0, PER_FILE_CAP)}\n// ... (file truncated — too large)`,
+        );
+      } catch {
+        contentByFile.set(file.filename, null);
+      }
+    }),
+  );
+
+  return mrData.files.map((file) => ({
+    ...file,
+    fullContent: contentByFile.get(file.filename) ?? null,
+  }));
+}
+
+async function hydrateGitLabFullContent(mrData: MRData, token?: string): Promise<FileDiff[]> {
+  const parsed = parseGitLabUrl(mrData.pr.url);
+  if (!parsed) return mrData.files;
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["PRIVATE-TOKEN"] = token;
+
+  const PER_FILE_CAP = 30_000;
+  return Promise.all(
+    mrData.files.map(async (file) => {
+      if (file.status === "removed") return { ...file, fullContent: null };
+
+      try {
+        const encodedPath = encodeURIComponent(parsed.projectPath);
+        const encodedFile = encodeURIComponent(file.filename);
+        const ref = encodeURIComponent(mrData.pr.headBranch);
+        const res = await fetch(`/api/gitlab/api/v4/projects/${encodedPath}/repository/files/${encodedFile}/raw?ref=${ref}`, { headers });
+        if (!res.ok) return { ...file, fullContent: null };
+        const text = await res.text();
+        return {
+          ...file,
+          fullContent: text.length <= PER_FILE_CAP ? text : `${text.slice(0, PER_FILE_CAP)}\n// ... (file truncated — too large)`,
+        };
+      } catch {
+        return { ...file, fullContent: null };
+      }
+    }),
+  );
+}
+
+async function hydrateFullContentForReview(mrData: MRData, token?: string): Promise<MRData> {
+  if (mrData.files.some((file) => file.fullContent)) return mrData;
+  const files = mrData.platform === "github"
+    ? await hydrateGitHubFullContent(mrData, token)
+    : await hydrateGitLabFullContent(mrData, token);
+
+  return {
+    ...mrData,
+    files,
+  };
+}
+
+async function fetchGitHubCodeowners(mrData: MRData, token?: string): Promise<string | null> {
+  const parsed = parseGitHubUrl(mrData.pr.url);
+  if (!parsed) return null;
+
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "AI-Code-Reviewer/1.0",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  for (const candidatePath of CODEOWNERS_CANDIDATE_PATHS) {
+    const encodedPath = candidatePath.split("/").map(encodeURIComponent).join("/");
+    const ref = encodeURIComponent(mrData.pr.headBranch);
+    const res = await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents/${encodedPath}?ref=${ref}`, { headers });
+    if (!res.ok) {
+      continue;
+    }
+    const data = await res.json() as { content?: string; encoding?: string };
+    if (data.encoding === "base64" && data.content) {
+      return atob(data.content.replace(/\n/g, ""));
+    }
+  }
+
+  return null;
+}
+
+async function fetchGitLabCodeowners(mrData: MRData, token?: string): Promise<string | null> {
+  const parsed = parseGitLabUrl(mrData.pr.url);
+  if (!parsed) return null;
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["PRIVATE-TOKEN"] = token;
+
+  for (const candidatePath of CODEOWNERS_CANDIDATE_PATHS) {
+    const encodedPath = encodeURIComponent(parsed.projectPath);
+    const encodedFile = encodeURIComponent(candidatePath);
+    const ref = encodeURIComponent(mrData.pr.headBranch);
+    const res = await fetch(`/api/gitlab/api/v4/projects/${encodedPath}/repository/files/${encodedFile}/raw?ref=${ref}`, { headers });
+    if (res.ok) {
+      return res.text();
+    }
+  }
+
+  return null;
+}
+
+async function fetchReviewerSuggestions(mrData: MRData, token?: string): Promise<CodeReview["reviewerSuggestions"]> {
+  try {
+    const codeownersContent = mrData.platform === "github"
+      ? await fetchGitHubCodeowners(mrData, token)
+      : await fetchGitLabCodeowners(mrData, token);
+
+    if (!codeownersContent) {
+      return [];
+    }
+
+    const rules = parseCodeowners(codeownersContent);
+    return buildReviewerSuggestions(mrData.files, rules);
+  } catch {
+    return [];
+  }
 }
 
 export async function analyzeSummary(mrData: MRData, aiConfig: AIConfig): Promise<ChangeSummary> {
@@ -477,8 +633,9 @@ Organize files into execution flow groups (Route/Entry → Middleware → Contro
     ], FLOW_SCHEMA);
 }
 
-export async function analyzeCodeReview(mrData: MRData, aiConfig: AIConfig): Promise<CodeReview> {
-  const { pr, files } = mrData;
+export async function analyzeCodeReview(mrData: MRData, aiConfig: AIConfig, token?: string): Promise<CodeReview> {
+  const hydrated = await hydrateFullContentForReview(mrData, token);
+  const { pr, files } = hydrated;
   const diffContent = buildContextAwareDiff(files);
 
   if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required. Please configure it in AI Settings.");
@@ -501,7 +658,11 @@ Use the full file content (when present) to catch issues that only appear in con
 
 Be precise: always provide the exact file path and line reference when flagging an issue.
 IMPORTANT: overallScore must be a decimal between 0.0 and 10.0 (e.g. 6.5, not 65).
-Always return valid JSON. For optional string fields (file, lineHint, currentCode, impact) always provide a string value (use "" if not applicable).${
+Always return valid JSON. For optional string fields (file, lineHint, currentCode, impact) always provide a string value (use "" if not applicable).
+For each issue:
+- set confidence to low, medium, or high based on how strongly the evidence supports the finding
+- set rationale to 1-2 sentences explaining why the finding matters in this specific PR
+- set fixable to true when a concrete code-level fix can be proposed from the provided context${
   aiConfig.customRules?.trim()
     ? `\n\nADDITIONAL REVIEWER RULES (from the team — follow these strictly):\n${aiConfig.customRules.trim()}`
     : ""
@@ -528,6 +689,10 @@ Perform a comprehensive senior-level code review using the full file context abo
     review.overallScore = Math.round((review.overallScore / 10) * 10) / 10;
   }
 
+  review.testGapSummary = computeTestGapSummary(files);
+  review.riskHotspots = computeRiskHotspots(files, review.issues, review.testGapSummary);
+  review.reviewerSuggestions = await fetchReviewerSuggestions(hydrated, token);
+
   return review;
 }
 
@@ -540,13 +705,13 @@ export interface IssueData {
   url: string;
 }
 
-function parseGitLabIssueUrl(url: string): { projectPath: string; issueIid: string } | null {
+export function parseGitLabIssueUrl(url: string): { projectPath: string; issueIid: string } | null {
   const match = url.match(/gitlab\.com\/(.+?)\/-\/(?:issues|work_items)\/(\d+)/);
   if (match) return { projectPath: match[1], issueIid: match[2] };
   return null;
 }
 
-function parseGitHubIssueUrl(url: string): { owner: string; repo: string; number: string } | null {
+export function parseGitHubIssueUrl(url: string): { owner: string; repo: string; number: string } | null {
   const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/);
   if (match) return { owner: match[1], repo: match[2], number: match[3] };
   return null;
@@ -734,4 +899,113 @@ Review the MR description and suggest what should be added or improved. Generate
 
   if (result.qualityScore > 100) result.qualityScore = 100;
   return result;
+}
+
+export async function askReviewQuestion(
+  mrData: MRData,
+  aiConfig: AIConfig,
+  question: string,
+  token?: string,
+): Promise<string> {
+  if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required.");
+
+  const hydrated = await hydrateFullContentForReview(mrData, token);
+  const context = buildContextAwareDiff(hydrated.files);
+
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${aiConfig.apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": window.location.origin,
+      "X-Title": "AI Code Reviewer",
+    },
+    body: JSON.stringify({
+      model: aiConfig.model,
+      messages: [
+        {
+          role: "system",
+          content: "You are a senior engineer answering focused questions about a pull or merge request. Be precise, grounded in the provided diff and file context, and say when the answer is uncertain.",
+        },
+        {
+          role: "user",
+          content: `PR Title: ${hydrated.pr.title}
+PR Description: ${hydrated.pr.description || "No description"}
+Branch: ${hydrated.pr.headBranch} → ${hydrated.pr.baseBranch}
+
+FILE CONTEXT + DIFFS:
+${context}
+
+Question: ${question}`,
+        },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OpenRouter error ${res.status}: ${errText}`);
+  }
+
+  const data = await res.json();
+  const content = data.choices?.[0]?.message?.content?.trim();
+  if (!content) throw new Error("OpenRouter returned empty response");
+  return content;
+}
+
+export async function generateIssueFix(
+  mrData: MRData,
+  issue: Pick<CodeReview["issues"][number], "title" | "description" | "file" | "lineHint" | "currentCode" | "suggestedFix" | "rationale">,
+  aiConfig: AIConfig,
+  token?: string,
+): Promise<string> {
+  if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required.");
+
+  const hydrated = await hydrateFullContentForReview(mrData, token);
+  const context = getRelevantFileContext(hydrated, issue.file);
+
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${aiConfig.apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": window.location.origin,
+      "X-Title": "AI Code Reviewer",
+    },
+    body: JSON.stringify({
+      model: aiConfig.model,
+      messages: [
+        {
+          role: "system",
+          content: "You are a senior engineer generating a concrete fix suggestion for a review issue. Return only the proposed code or patch-style snippet with a short introductory sentence if needed.",
+        },
+        {
+          role: "user",
+          content: `Issue title: ${issue.title}
+Issue description: ${issue.description}
+Issue rationale: ${issue.rationale}
+File: ${issue.file ?? "Unknown"}
+Line hint: ${issue.lineHint ?? "Unknown"}
+Current code:
+${issue.currentCode || "(not provided)"}
+
+Existing suggested fix:
+${issue.suggestedFix || "(not provided)"}
+
+Relevant file context:
+${context}`,
+        },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OpenRouter error ${res.status}: ${errText}`);
+  }
+
+  const data = await res.json();
+  const content = data.choices?.[0]?.message?.content?.trim();
+  if (!content) throw new Error("OpenRouter returned empty response");
+  return content;
 }
