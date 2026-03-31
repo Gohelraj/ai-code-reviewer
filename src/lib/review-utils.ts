@@ -1,4 +1,5 @@
 import type { CodeReview, MRDescriptionReview, RequirementsCheck, ReviewIssue, FileDiff } from "../types";
+import type { ReviewMode } from "../components/AISettings";
 
 export interface MergeReadinessGate {
   label: string;
@@ -9,6 +10,31 @@ export interface MergeReadinessGate {
 const TEST_FILE_PATTERN = /(^|\/)(tests?|__tests__|__mocks__|specs?)(\/|$)|(\.|-)(test|spec)\.[^.]+$/i;
 const AUTH_RISK_PATTERN = /(auth|permission|role|session|token|oauth|acl|rbac|login|signup|policy|guard)/i;
 const CONFIG_RISK_PATTERN = /(config|env|settings|docker|compose|k8s|terraform|helm|workflow|pipeline|secret)/i;
+const REVIEW_MODE_CONFIG = {
+  quick: {
+    maxFiles: 6,
+    maxFullFiles: 0,
+    totalContextChars: 32_000,
+    perFilePatchChars: 2_500,
+    perFileFullChars: 0,
+  },
+  deep: {
+    maxFiles: 10,
+    maxFullFiles: 4,
+    totalContextChars: 70_000,
+    perFilePatchChars: 4_500,
+    perFileFullChars: 12_000,
+  },
+} as const;
+
+export interface ReviewContextPlan {
+  selectedFiles: string[];
+  fullContentFiles: string[];
+  omittedCount: number;
+  totalContextChars: number;
+  perFilePatchChars: number;
+  perFileFullChars: number;
+}
 
 export function isTestFile(filename: string): boolean {
   return TEST_FILE_PATTERN.test(filename);
@@ -17,6 +43,80 @@ export function isTestFile(filename: string): boolean {
 export function isProductionCodeFile(filename: string): boolean {
   if (isTestFile(filename)) return false;
   return /\.(ts|tsx|js|jsx|py|rb|go|java|kt|rs|php|cs|swift|c|cpp|m|mm|vue|svelte)$/i.test(filename);
+}
+
+function estimateFileReviewScore(file: FileDiff): number {
+  let score = Math.min(file.changes, 140);
+  if (isProductionCodeFile(file.filename)) {
+    score += 18;
+  }
+  if (AUTH_RISK_PATTERN.test(file.filename)) {
+    score += 24;
+  }
+  if (CONFIG_RISK_PATTERN.test(file.filename)) {
+    score += 16;
+  }
+  if (isTestFile(file.filename)) {
+    score -= 10;
+  }
+  if (file.status === "added") {
+    score += 8;
+  }
+  if (!file.patch) {
+    score -= 6;
+  }
+  return score;
+}
+
+export function getReviewContextPlan(files: FileDiff[], reviewMode: ReviewMode = "deep"): ReviewContextPlan {
+  const config = REVIEW_MODE_CONFIG[reviewMode];
+  const eligibleFiles = files
+    .filter((file) => file.status !== "removed" && !!file.patch)
+    .sort((left, right) => estimateFileReviewScore(right) - estimateFileReviewScore(left));
+
+  const selected = eligibleFiles.slice(0, config.maxFiles);
+  const fullContentFiles = selected
+    .filter((file) => isProductionCodeFile(file.filename))
+    .slice(0, config.maxFullFiles)
+    .map((file) => file.filename);
+
+  return {
+    selectedFiles: selected.map((file) => file.filename),
+    fullContentFiles,
+    omittedCount: Math.max(files.filter((file) => file.status !== "removed").length - selected.length, 0),
+    totalContextChars: config.totalContextChars,
+    perFilePatchChars: config.perFilePatchChars,
+    perFileFullChars: config.perFileFullChars,
+  };
+}
+
+function estimateFullContentChars(file: FileDiff, perFileFullChars: number): number {
+  if (file.fullContent) {
+    return Math.min(file.fullContent.length, perFileFullChars);
+  }
+  const patchLength = file.patch?.length ?? 0;
+  const heuristic = Math.max(file.changes * 140, patchLength * 3, 1_200);
+  return Math.min(heuristic, perFileFullChars);
+}
+
+export function estimateReviewContextChars(files: FileDiff[], reviewMode: ReviewMode = "deep"): number {
+  const plan = getReviewContextPlan(files, reviewMode);
+  let total = 0;
+
+  for (const filename of plan.selectedFiles) {
+    const file = files.find((entry) => entry.filename === filename);
+    if (!file) continue;
+    total += Math.min(file.patch?.length ?? 120, plan.perFilePatchChars) + 64;
+    if (plan.fullContentFiles.includes(filename) && plan.perFileFullChars > 0) {
+      total += estimateFullContentChars(file, plan.perFileFullChars) + 64;
+    }
+  }
+
+  if (plan.omittedCount > 0) {
+    total += 120;
+  }
+
+  return Math.min(total, plan.totalContextChars);
 }
 
 export function computeTestGapSummary(files: FileDiff[]): string {

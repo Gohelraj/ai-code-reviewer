@@ -5,21 +5,29 @@ import toast from "react-hot-toast";
 import type { AnalysisState } from "../types";
 
 export type PostingMode = "inline" | "general";
+export type AnalysisStartMode = "summary-only" | "summary-and-flow";
+export type ReviewMode = "quick" | "deep";
 
 export interface AIPreset {
   id: string;
   name: string;
   model: string;
+  auxiliaryModel?: string;
   customRules: string;
   postingMode?: PostingMode;
+  analysisStartMode?: AnalysisStartMode;
+  reviewMode?: ReviewMode;
 }
 
 export interface AIConfig {
   provider: "openrouter";
   apiKey: string;
   model: string;
+  auxiliaryModel?: string;
   customRules?: string;
   postingMode?: PostingMode;
+  analysisStartMode?: AnalysisStartMode;
+  reviewMode?: ReviewMode;
   presets?: AIPreset[];
   lastPresetId?: string;
 }
@@ -54,8 +62,11 @@ const DEFAULT_CONFIG: AIConfig = {
   provider: "openrouter",
   apiKey: "",
   model: "anthropic/claude-sonnet-4-6",
+  auxiliaryModel: "",
   customRules: "",
   postingMode: "inline",
+  analysisStartMode: "summary-and-flow",
+  reviewMode: "deep",
   presets: [],
   lastPresetId: "",
 };
@@ -66,8 +77,11 @@ const REPO_DEFAULTS_KEY = "mergeai_repo_defaults";
 
 interface RepoDefaults {
   model?: string;
+  auxiliaryModel?: string;
   customRules?: string;
   postingMode?: PostingMode;
+  analysisStartMode?: AnalysisStartMode;
+  reviewMode?: ReviewMode;
   lastPresetId?: string;
   defaultTab?: AnalysisState["activeTab"];
 }
@@ -117,8 +131,11 @@ export function resolveAIConfigForRepo(baseConfig: AIConfig, repoKey?: string | 
       ...DEFAULT_CONFIG,
       ...baseConfig,
       model: preset.model,
+      auxiliaryModel: preset.auxiliaryModel ?? baseConfig.auxiliaryModel ?? "",
       customRules: preset.customRules,
       postingMode: preset.postingMode ?? defaults.postingMode ?? baseConfig.postingMode ?? "inline",
+      analysisStartMode: preset.analysisStartMode ?? defaults.analysisStartMode ?? baseConfig.analysisStartMode ?? "summary-and-flow",
+      reviewMode: preset.reviewMode ?? defaults.reviewMode ?? baseConfig.reviewMode ?? "deep",
       lastPresetId: preset.id,
     };
   }
@@ -127,8 +144,11 @@ export function resolveAIConfigForRepo(baseConfig: AIConfig, repoKey?: string | 
     ...DEFAULT_CONFIG,
     ...baseConfig,
     model: defaults.model ?? baseConfig.model,
+    auxiliaryModel: defaults.auxiliaryModel ?? baseConfig.auxiliaryModel ?? "",
     customRules: defaults.customRules ?? baseConfig.customRules,
     postingMode: defaults.postingMode ?? baseConfig.postingMode ?? "inline",
+    analysisStartMode: defaults.analysisStartMode ?? baseConfig.analysisStartMode ?? "summary-and-flow",
+    reviewMode: defaults.reviewMode ?? baseConfig.reviewMode ?? "deep",
     lastPresetId: defaults.lastPresetId ?? baseConfig.lastPresetId,
   };
 }
@@ -155,6 +175,9 @@ export function AISettings({ config, onChange, disabled, repoKey }: AISettingsPr
 
   const isOpenRouter = true;
   const selectedModel = OPENROUTER_MODELS.find((m) => m.id === config.model);
+  const selectedAuxiliaryModel = config.auxiliaryModel
+    ? OPENROUTER_MODELS.find((m) => m.id === config.auxiliaryModel)
+    : null;
   const selectedPreset = config.presets?.find((preset) => preset.id === config.lastPresetId);
 
   const handleSave = () => {
@@ -162,8 +185,11 @@ export function AISettings({ config, onChange, disabled, repoKey }: AISettingsPr
     if (repoKey) {
       saveRepoDefaults(repoKey, {
         model: config.model,
+        auxiliaryModel: config.auxiliaryModel ?? "",
         customRules: config.customRules ?? "",
         postingMode: config.postingMode ?? "inline",
+        analysisStartMode: config.analysisStartMode ?? "summary-and-flow",
+        reviewMode: config.reviewMode ?? "deep",
         lastPresetId: config.lastPresetId,
       });
     }
@@ -183,8 +209,11 @@ export function AISettings({ config, onChange, disabled, repoKey }: AISettingsPr
       id: `preset-${Date.now().toString(36)}`,
       name,
       model: config.model,
+      auxiliaryModel: config.auxiliaryModel ?? "",
       customRules: config.customRules ?? "",
       postingMode: config.postingMode ?? "inline",
+      analysisStartMode: config.analysisStartMode ?? "summary-and-flow",
+      reviewMode: config.reviewMode ?? "deep",
     };
 
     onChange({
@@ -202,8 +231,11 @@ export function AISettings({ config, onChange, disabled, repoKey }: AISettingsPr
     onChange({
       ...config,
       model: preset.model,
+      auxiliaryModel: preset.auxiliaryModel ?? "",
       customRules: preset.customRules,
       postingMode: preset.postingMode ?? "inline",
+      analysisStartMode: preset.analysisStartMode ?? "summary-and-flow",
+      reviewMode: preset.reviewMode ?? "deep",
       lastPresetId: preset.id,
     });
     toast.success(`Applied preset "${preset.name}"`);
@@ -234,6 +266,7 @@ export function AISettings({ config, onChange, disabled, repoKey }: AISettingsPr
           <span className="text-xs text-muted-foreground ml-2">
             {config.apiKey
               ? `OpenRouter · ${selectedModel?.label ?? config.model}`
+              + (selectedAuxiliaryModel ? ` · Fast tasks: ${selectedAuxiliaryModel.label}` : "")
               : "OpenRouter · No API key set"}
           </span>
         </div>
@@ -301,7 +334,7 @@ export function AISettings({ config, onChange, disabled, repoKey }: AISettingsPr
 
                   {/* Model selector */}
                   <div>
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Model</p>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Primary Review Model</p>
                     <select
                       value={config.model}
                       onChange={(e) => onChange({ ...config, model: e.target.value })}
@@ -319,7 +352,31 @@ export function AISettings({ config, onChange, disabled, repoKey }: AISettingsPr
                       ))}
                     </select>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Models marked ★ are recommended for code review quality.
+                      Used for the main code review. Models marked ★ are strong default choices.
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Auxiliary Model</p>
+                    <select
+                      value={config.auxiliaryModel ?? ""}
+                      onChange={(e) => onChange({ ...config, auxiliaryModel: e.target.value })}
+                      disabled={disabled}
+                      className="w-full px-3 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all text-foreground appearance-none cursor-pointer"
+                    >
+                      <option value="">Use primary review model</option>
+                      {Object.entries(MODEL_GROUPS).map(([group, models]) => (
+                        <optgroup key={group} label={group}>
+                          {models.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.label}{m.recommended ? " ★" : ""}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Used for summary, execution flow, requirements, MR description, chat, and fix suggestions to reduce cost and latency.
                     </p>
                   </div>
 
@@ -337,6 +394,40 @@ export function AISettings({ config, onChange, disabled, repoKey }: AISettingsPr
                     <p className="text-xs text-muted-foreground mt-1">
                       Inline tries line-level comments first. General posts MR/PR-level notes directly.
                     </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Start Mode</p>
+                      <select
+                        value={config.analysisStartMode ?? "summary-and-flow"}
+                        onChange={(e) => onChange({ ...config, analysisStartMode: e.target.value as AnalysisStartMode })}
+                        disabled={disabled}
+                        className="w-full px-3 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all text-foreground appearance-none cursor-pointer"
+                      >
+                        <option value="summary-and-flow">Summary + flow</option>
+                        <option value="summary-only">Summary only</option>
+                      </select>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Summary only is the fastest and cheapest start; execution flow can still be generated later.
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Review Depth</p>
+                      <select
+                        value={config.reviewMode ?? "deep"}
+                        onChange={(e) => onChange({ ...config, reviewMode: e.target.value as ReviewMode })}
+                        disabled={disabled}
+                        className="w-full px-3 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all text-foreground appearance-none cursor-pointer"
+                      >
+                        <option value="deep">Deep review</option>
+                        <option value="quick">Quick review</option>
+                      </select>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Quick review limits context and focuses on higher-severity findings for lower latency.
+                      </p>
+                    </div>
                   </div>
 
                   {/* Custom review rules */}
@@ -375,8 +466,10 @@ export function AISettings({ config, onChange, disabled, repoKey }: AISettingsPr
                               className="flex-1 text-left"
                             >
                               <p className="text-sm text-foreground font-medium">{preset.name}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {OPENROUTER_MODELS.find((model) => model.id === preset.model)?.label ?? preset.model} · {(preset.postingMode ?? "inline") === "inline" ? "Inline" : "General"}
+                                 <p className="text-xs text-muted-foreground">
+                                {OPENROUTER_MODELS.find((model) => model.id === preset.model)?.label ?? preset.model}
+                                {preset.auxiliaryModel ? ` · Fast: ${OPENROUTER_MODELS.find((model) => model.id === preset.auxiliaryModel)?.label ?? preset.auxiliaryModel}` : ""}
+                                {` · ${(preset.reviewMode ?? "deep") === "deep" ? "Deep" : "Quick"}`}
                               </p>
                             </button>
                             <button

@@ -1,6 +1,6 @@
 import type { MRData, ChangeSummary, ExecutionFlow, CodeReview, RequirementsCheck, MRDescriptionReview, FileDiff, PRInfo } from "../types";
-import type { AIConfig } from "../components/AISettings";
-import { computeRiskHotspots, computeTestGapSummary } from "./review-utils";
+import type { AIConfig, ReviewMode } from "../components/AISettings";
+import { computeRiskHotspots, computeTestGapSummary, getReviewContextPlan } from "./review-utils";
 import { buildReviewerSuggestions, parseCodeowners } from "./codeowners";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -358,8 +358,6 @@ const REVIEW_SCHEMA: Record<string, unknown> = {
 // ─── Diff / context builders ──────────────────────────────────────────────────
 
 const PER_FILE_PATCH_CAP = 8_000;   // max diff chars per file (summary/flow)
-const PER_FILE_FULL_CAP  = 25_000;  // max full-content chars per file (review)
-const TOTAL_CONTEXT_CAP  = 120_000; // total review context budget (~30k tokens)
 
 /** Used for summary + flow: full diffs, no file content */
 export function buildDiffContent(files: FileDiff[]): string {
@@ -377,33 +375,39 @@ export function buildDiffContent(files: FileDiff[]): string {
  * Used for code review: full file content + diff per changed file.
  * Files sorted by change size (most-changed first). Respects total token budget.
  */
-export function buildContextAwareDiff(files: FileDiff[]): string {
-  const sorted = [...files].sort((a, b) => (b.additions + b.deletions) - (a.additions + a.deletions));
-  let budget = TOTAL_CONTEXT_CAP;
+export function buildContextAwareDiff(files: FileDiff[], reviewMode: ReviewMode = "deep"): string {
+  const plan = getReviewContextPlan(files, reviewMode);
+  const planFiles = plan.selectedFiles
+    .map((filename) => files.find((file) => file.filename === filename))
+    .filter((file): file is FileDiff => !!file);
+  let budget = plan.totalContextChars;
   const parts: string[] = [];
 
-  for (const f of sorted) {
+  for (const f of planFiles) {
     if (budget <= 500) {
-      parts.push(`### ${f.filename} — omitted (context budget reached)`);
       continue;
     }
 
     const header = `### ${f.filename} [${f.status}] +${f.additions}/-${f.deletions}`;
     const sections: string[] = [header];
 
-    if (f.fullContent && f.status !== "removed") {
-      const content = f.fullContent.slice(0, PER_FILE_FULL_CAP);
+    if (plan.fullContentFiles.includes(f.filename) && f.fullContent && f.status !== "removed") {
+      const content = f.fullContent.slice(0, plan.perFileFullChars);
       sections.push(`\nFULL FILE (current state after changes):\n\`\`\`\n${content}\n\`\`\``);
     }
 
     if (f.patch) {
-      const patch = f.patch.slice(0, PER_FILE_PATCH_CAP) + (f.patch.length > PER_FILE_PATCH_CAP ? "\n... (diff truncated)" : "");
+      const patch = f.patch.slice(0, plan.perFilePatchChars) + (f.patch.length > plan.perFilePatchChars ? "\n... (diff truncated)" : "");
       sections.push(`\nDIFF (what changed):\n${patch}`);
     }
 
     const block = sections.join("\n");
     budget -= block.length;
     parts.push(block);
+  }
+
+  if (plan.omittedCount > 0) {
+    parts.push(`### Omitted Files\n${plan.omittedCount} lower-priority file(s) were omitted from the review context to reduce latency and token cost.`);
   }
 
   return parts.join("\n\n---\n\n");
@@ -417,11 +421,11 @@ export async function fetchMRDiff(url: string, token?: string): Promise<MRData> 
   throw new Error("Invalid URL. Please provide a GitHub Pull Request or GitLab Merge Request URL.");
 }
 
-function getRelevantFileContext(mrData: MRData, targetFile?: string): string {
+function getRelevantFileContext(mrData: MRData, targetFile?: string, reviewMode: ReviewMode = "deep"): string {
   const files = targetFile
     ? mrData.files.filter((file) => file.filename === targetFile)
     : mrData.files;
-  return buildContextAwareDiff(files.length > 0 ? files : mrData.files);
+  return buildContextAwareDiff(files.length > 0 ? files : mrData.files, reviewMode);
 }
 
 const CODEOWNERS_CANDIDATE_PATHS = [
@@ -431,9 +435,9 @@ const CODEOWNERS_CANDIDATE_PATHS = [
   "docs/CODEOWNERS",
 ] as const;
 
-async function hydrateGitHubFullContent(mrData: MRData, token?: string): Promise<FileDiff[]> {
+async function hydrateGitHubFullContent(mrData: MRData, filenames: string[], token?: string): Promise<FileDiff[]> {
   const parsed = parseGitHubUrl(mrData.pr.url);
-  if (!parsed) return mrData.files;
+  if (!parsed || filenames.length === 0) return mrData.files;
 
   const { owner, repo, prNumber } = parsed;
   const headers: Record<string, string> = {
@@ -451,8 +455,10 @@ async function hydrateGitHubFullContent(mrData: MRData, token?: string): Promise
   const PER_FILE_CAP = 30_000;
   const contentByFile = new Map<string, string | null>();
 
+  const filenameSet = new Set(filenames);
+
   await Promise.all(
-    files.map(async (file) => {
+    files.filter((file) => filenameSet.has(file.filename)).map(async (file) => {
       if (!file.raw_url || file.status === "removed") {
         contentByFile.set(file.filename, null);
         return;
@@ -476,20 +482,26 @@ async function hydrateGitHubFullContent(mrData: MRData, token?: string): Promise
 
   return mrData.files.map((file) => ({
     ...file,
-    fullContent: contentByFile.get(file.filename) ?? null,
+    fullContent: contentByFile.has(file.filename)
+      ? contentByFile.get(file.filename) ?? null
+      : file.fullContent ?? null,
   }));
 }
 
-async function hydrateGitLabFullContent(mrData: MRData, token?: string): Promise<FileDiff[]> {
+async function hydrateGitLabFullContent(mrData: MRData, filenames: string[], token?: string): Promise<FileDiff[]> {
   const parsed = parseGitLabUrl(mrData.pr.url);
-  if (!parsed) return mrData.files;
+  if (!parsed || filenames.length === 0) return mrData.files;
 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers["PRIVATE-TOKEN"] = token;
 
   const PER_FILE_CAP = 30_000;
+  const filenameSet = new Set(filenames);
   return Promise.all(
     mrData.files.map(async (file) => {
+      if (!filenameSet.has(file.filename)) {
+        return { ...file, fullContent: file.fullContent ?? null };
+      }
       if (file.status === "removed") return { ...file, fullContent: null };
 
       try {
@@ -510,17 +522,40 @@ async function hydrateGitLabFullContent(mrData: MRData, token?: string): Promise
   );
 }
 
-async function hydrateFullContentForReview(mrData: MRData, token?: string): Promise<MRData> {
-  if (mrData.files.some((file) => file.fullContent)) return mrData;
+async function hydrateFilesForReview(mrData: MRData, filenames: string[], token?: string): Promise<MRData> {
+  const missingFilenames = filenames.filter((filename) => {
+    const file = mrData.files.find((entry) => entry.filename === filename);
+    return !!file && !file.fullContent && file.status !== "removed";
+  });
+
+  if (missingFilenames.length === 0) {
+    return mrData;
+  }
+
   const files = mrData.platform === "github"
-    ? await hydrateGitHubFullContent(mrData, token)
-    : await hydrateGitLabFullContent(mrData, token);
+    ? await hydrateGitHubFullContent(mrData, missingFilenames, token)
+    : await hydrateGitLabFullContent(mrData, missingFilenames, token);
 
   return {
     ...mrData,
     files,
   };
 }
+
+export async function prepareMRDataForReview(mrData: MRData, aiConfig: AIConfig, token?: string): Promise<MRData> {
+  const reviewMode = aiConfig.reviewMode ?? "deep";
+  const plan = getReviewContextPlan(mrData.files, reviewMode);
+  return hydrateFilesForReview(mrData, plan.fullContentFiles, token);
+}
+
+function getModelForTask(aiConfig: AIConfig, task: "summary" | "flow" | "review" | "requirements" | "mr-description" | "chat" | "fix"): string {
+  if (task === "review") {
+    return aiConfig.model;
+  }
+  return aiConfig.auxiliaryModel?.trim() || aiConfig.model;
+}
+
+const reviewerSuggestionCache = new Map<string, Promise<CodeReview["reviewerSuggestions"]>>();
 
 async function fetchGitHubCodeowners(mrData: MRData, token?: string): Promise<string | null> {
   const parsed = parseGitHubUrl(mrData.pr.url);
@@ -570,20 +605,31 @@ async function fetchGitLabCodeowners(mrData: MRData, token?: string): Promise<st
 }
 
 async function fetchReviewerSuggestions(mrData: MRData, token?: string): Promise<CodeReview["reviewerSuggestions"]> {
-  try {
-    const codeownersContent = mrData.platform === "github"
-      ? await fetchGitHubCodeowners(mrData, token)
-      : await fetchGitLabCodeowners(mrData, token);
+  const cacheKey = `${mrData.platform}:${mrData.pr.url}:${mrData.pr.headBranch}`;
+  const cached = reviewerSuggestionCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
 
-    if (!codeownersContent) {
+  const promise = (async () => {
+    try {
+      const codeownersContent = mrData.platform === "github"
+        ? await fetchGitHubCodeowners(mrData, token)
+        : await fetchGitLabCodeowners(mrData, token);
+
+      if (!codeownersContent) {
+        return [];
+      }
+
+      const rules = parseCodeowners(codeownersContent);
+      return buildReviewerSuggestions(mrData.files, rules);
+    } catch {
       return [];
     }
+  })();
 
-    const rules = parseCodeowners(codeownersContent);
-    return buildReviewerSuggestions(mrData.files, rules);
-  } catch {
-    return [];
-  }
+  reviewerSuggestionCache.set(cacheKey, promise);
+  return promise;
 }
 
 export async function analyzeSummary(mrData: MRData, aiConfig: AIConfig): Promise<ChangeSummary> {
@@ -604,7 +650,7 @@ ${diffContent}
 
 Provide a comprehensive summary. For breakingChangesDescription, use an empty string "" if there are no breaking changes.`;
 
-    return callOpenRouter<ChangeSummary>(aiConfig.apiKey, aiConfig.model, [
+    return callOpenRouter<ChangeSummary>(aiConfig.apiKey, getModelForTask(aiConfig, "summary"), [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ], SUMMARY_SCHEMA);
@@ -627,21 +673,23 @@ ${diffContent}
 
 Organize files into execution flow groups (Route/Entry → Middleware → Controller → Service → Repository/DAL → Model/Schema → Utils → Tests → Config). For callsInto, always provide an array (empty [] if none).`;
 
-    return callOpenRouter<ExecutionFlow>(aiConfig.apiKey, aiConfig.model, [
+    return callOpenRouter<ExecutionFlow>(aiConfig.apiKey, getModelForTask(aiConfig, "flow"), [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ], FLOW_SCHEMA);
 }
 
 export async function analyzeCodeReview(mrData: MRData, aiConfig: AIConfig, token?: string): Promise<CodeReview> {
-  const hydrated = await hydrateFullContentForReview(mrData, token);
+  const hydrated = await prepareMRDataForReview(mrData, aiConfig, token);
   const { pr, files } = hydrated;
-  const diffContent = buildContextAwareDiff(files);
+  const reviewMode = aiConfig.reviewMode ?? "deep";
+  const diffContent = buildContextAwareDiff(files, reviewMode);
 
   if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required. Please configure it in AI Settings.");
 
   const hasFullContent = files.some((f) => f.fullContent);
-  const systemPrompt = `You are a very senior software engineer (10+ years) performing a thorough, context-aware code review.
+  const reviewerSuggestionsPromise = fetchReviewerSuggestions(hydrated, token);
+  const systemPrompt = `You are a very senior software engineer (10+ years) performing a ${reviewMode === "quick" ? "fast, high-signal" : "thorough, context-aware"} code review.
 
 For each changed file you receive:
 ${hasFullContent
@@ -663,6 +711,10 @@ For each issue:
 - set confidence to low, medium, or high based on how strongly the evidence supports the finding
 - set rationale to 1-2 sentences explaining why the finding matters in this specific PR
 - set fixable to true when a concrete code-level fix can be proposed from the provided context${
+  reviewMode === "quick"
+    ? "\n- in quick mode, prioritize only high-confidence critical and warning issues unless a suggestion is unusually important"
+    : ""
+}${
   aiConfig.customRules?.trim()
     ? `\n\nADDITIONAL REVIEWER RULES (from the team — follow these strictly):\n${aiConfig.customRules.trim()}`
     : ""
@@ -679,7 +731,7 @@ ${diffContent}
 
 Perform a comprehensive senior-level code review using the full file context above.`;
 
-  const review = await callOpenRouter<CodeReview>(aiConfig.apiKey, aiConfig.model, [
+  const review = await callOpenRouter<CodeReview>(aiConfig.apiKey, getModelForTask(aiConfig, "review"), [
     { role: "system", content: systemPrompt },
     { role: "user", content: userPrompt },
   ], REVIEW_SCHEMA);
@@ -691,7 +743,7 @@ Perform a comprehensive senior-level code review using the full file context abo
 
   review.testGapSummary = computeTestGapSummary(files);
   review.riskHotspots = computeRiskHotspots(files, review.issues, review.testGapSummary);
-  review.reviewerSuggestions = await fetchReviewerSuggestions(hydrated, token);
+  review.reviewerSuggestions = await reviewerSuggestionsPromise;
 
   return review;
 }
@@ -819,7 +871,7 @@ ${diffContent}
 
 Extract ALL requirements from the issue and check each one against the code changes. Be specific about what evidence you found (or didn't find) in the diff.`;
 
-  const result = await callOpenRouter<RequirementsCheck>(aiConfig.apiKey, aiConfig.model, [
+  const result = await callOpenRouter<RequirementsCheck>(aiConfig.apiKey, getModelForTask(aiConfig, "requirements"), [
     { role: "system", content: systemPrompt },
     { role: "user", content: userPrompt },
   ], REQUIREMENTS_SCHEMA);
@@ -892,7 +944,7 @@ ${diffContent}
 
 Review the MR description and suggest what should be added or improved. Generate a complete improved description.`;
 
-  const result = await callOpenRouter<MRDescriptionReview>(aiConfig.apiKey, aiConfig.model, [
+  const result = await callOpenRouter<MRDescriptionReview>(aiConfig.apiKey, getModelForTask(aiConfig, "mr-description"), [
     { role: "system", content: systemPrompt },
     { role: "user", content: userPrompt },
   ], MR_DESCRIPTION_SCHEMA);
@@ -909,8 +961,7 @@ export async function askReviewQuestion(
 ): Promise<string> {
   if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required.");
 
-  const hydrated = await hydrateFullContentForReview(mrData, token);
-  const context = buildContextAwareDiff(hydrated.files);
+  const context = buildContextAwareDiff(mrData.files, "quick");
 
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -921,7 +972,7 @@ export async function askReviewQuestion(
       "X-Title": "AI Code Reviewer",
     },
     body: JSON.stringify({
-      model: aiConfig.model,
+      model: getModelForTask(aiConfig, "chat"),
       messages: [
         {
           role: "system",
@@ -929,9 +980,9 @@ export async function askReviewQuestion(
         },
         {
           role: "user",
-          content: `PR Title: ${hydrated.pr.title}
-PR Description: ${hydrated.pr.description || "No description"}
-Branch: ${hydrated.pr.headBranch} → ${hydrated.pr.baseBranch}
+          content: `PR Title: ${mrData.pr.title}
+PR Description: ${mrData.pr.description || "No description"}
+Branch: ${mrData.pr.headBranch} → ${mrData.pr.baseBranch}
 
 FILE CONTEXT + DIFFS:
 ${context}
@@ -961,8 +1012,10 @@ export async function generateIssueFix(
 ): Promise<string> {
   if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required.");
 
-  const hydrated = await hydrateFullContentForReview(mrData, token);
-  const context = getRelevantFileContext(hydrated, issue.file);
+  const hydrated = issue.file
+    ? await hydrateFilesForReview(mrData, [issue.file], token)
+    : mrData;
+  const context = getRelevantFileContext(hydrated, issue.file, "deep");
 
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -973,7 +1026,7 @@ export async function generateIssueFix(
       "X-Title": "AI Code Reviewer",
     },
     body: JSON.stringify({
-      model: aiConfig.model,
+      model: getModelForTask(aiConfig, "fix"),
       messages: [
         {
           role: "system",

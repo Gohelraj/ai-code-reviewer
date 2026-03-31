@@ -4,7 +4,7 @@ import { InputForm } from "./components/InputForm";
 import type { SubmitPayload } from "./components/InputForm";
 import { AnalysisProgress } from "./components/AnalysisProgress";
 import { ResultsDashboard } from "./components/ResultsDashboard";
-import { fetchMRDiff, analyzeSummary, analyzeExecutionFlow, analyzeCodeReview, fetchIssueData, analyzeRequirements, analyzeMRDescription } from "./lib/api";
+import { fetchMRDiff, analyzeSummary, analyzeExecutionFlow, analyzeCodeReview, fetchIssueData, analyzeRequirements, analyzeMRDescription, prepareMRDataForReview } from "./lib/api";
 import type { IssueData } from "./lib/api";
 import { saveAnalysis } from "./lib/history";
 import type { HistoryEntry } from "./lib/history";
@@ -34,6 +34,7 @@ function App() {
   const [state, setState] = useState<AnalysisState>(createInitialState);
   const [activeAIConfig, setActiveAIConfig] = useState<AIConfig | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
+  const [flowLoading, setFlowLoading] = useState(false);
   const [reqLoading, setReqLoading] = useState(false);
   const [mrDescLoading, setMrDescLoading] = useState(false);
   const [analysisUrl, setAnalysisUrl] = useState("");
@@ -63,6 +64,7 @@ function App() {
       reviewChat: [],
     });
     setActiveAIConfig(aiConfig);
+    setFlowLoading(false);
     setAnalysisUrl(url);
     setAnalysisToken(token);
     setIssueData(null);
@@ -88,13 +90,20 @@ function App() {
         return summary;
       });
 
-      updateState({ step: "flowing" });
-      const flowPromise = analyzeExecutionFlow(mrData, aiConfig).then((executionFlow) => {
-        updateState({ executionFlow });
-        return executionFlow;
-      });
+      if ((aiConfig.analysisStartMode ?? "summary-and-flow") === "summary-and-flow") {
+        updateState({ step: "flowing" });
+        setFlowLoading(true);
+        const flowPromise = analyzeExecutionFlow(mrData, aiConfig).then((executionFlow) => {
+          updateState({ executionFlow });
+          return executionFlow;
+        }).finally(() => {
+          setFlowLoading(false);
+        });
 
-      await Promise.all([summaryPromise, flowPromise]);
+        await Promise.all([summaryPromise, flowPromise]);
+      } else {
+        await summaryPromise;
+      }
 
       // Done — code review is triggered manually by the user
       updateState({ step: "done" });
@@ -117,6 +126,7 @@ function App() {
     setState(createInitialState());
     setActiveAIConfig(null);
     setReviewLoading(false);
+    setFlowLoading(false);
     setReqLoading(false);
     setMrDescLoading(false);
     setAnalysisUrl("");
@@ -129,6 +139,7 @@ function App() {
     setActiveAIConfig(entry.aiConfig);
     setAnalysisUrl(entry.url);
     setReviewLoading(false);
+    setFlowLoading(false);
     writeUiStateToLocation({
       activeTab: entry.state.activeTab,
       selectedFile: entry.state.selectedFile,
@@ -167,12 +178,37 @@ function App() {
     if (repoKey) {
       saveRepoDefaults(repoKey, {
         model: config.model,
+        auxiliaryModel: config.auxiliaryModel ?? "",
         customRules: config.customRules ?? "",
         postingMode: config.postingMode ?? "inline",
+        analysisStartMode: config.analysisStartMode ?? "summary-and-flow",
+        reviewMode: config.reviewMode ?? "deep",
         lastPresetId: config.lastPresetId,
       });
     }
   }, [analysisUrl]);
+
+  const handleTriggerFlow = useCallback(async () => {
+    if (!state.mrData || !activeAIConfig || flowLoading) return;
+    setFlowLoading(true);
+    try {
+      const executionFlow = await analyzeExecutionFlow(state.mrData, activeAIConfig);
+      updateState({ executionFlow, activeTab: "flow" });
+      toast.success("Execution flow complete!");
+      setState((prev) => {
+        if (analysisUrl && activeAIConfig) {
+          saveAnalysis(analysisUrl, prev, activeAIConfig);
+        }
+        return prev;
+      });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : "Execution flow failed";
+      updateState({ error });
+      toast.error(error);
+    } finally {
+      setFlowLoading(false);
+    }
+  }, [state.mrData, activeAIConfig, flowLoading, updateState, analysisUrl]);
 
   const handleTriggerReview = useCallback(async () => {
     if (!state.mrData || !activeAIConfig || reviewLoading) return;
@@ -184,9 +220,11 @@ function App() {
     }
 
     try {
-      const codeReview = await analyzeCodeReview(state.mrData, activeAIConfig, analysisToken);
+      const preparedMRData = await prepareMRDataForReview(state.mrData, activeAIConfig, analysisToken);
+      const codeReview = await analyzeCodeReview(preparedMRData, activeAIConfig, analysisToken);
       codeReview.reviewDiff = computeReviewDiff(state.codeReview, codeReview);
       updateState({
+        mrData: preparedMRData,
         codeReview,
         activeTab: "review",
         selectedIssueId: state.selectedIssueId && codeReview.issues.some((issue) => issue.id === state.selectedIssueId)
@@ -286,8 +324,10 @@ function App() {
           theme={theme}
           onThemeChange={setTheme}
           reviewLoading={reviewLoading}
+          flowLoading={flowLoading}
           reqLoading={reqLoading}
           mrDescLoading={mrDescLoading}
+          onTriggerFlow={handleTriggerFlow}
           onTriggerReview={handleTriggerReview}
           onTriggerRequirements={handleTriggerRequirements}
           onTriggerMRDescription={handleTriggerMRDescription}
@@ -327,8 +367,10 @@ function App() {
       theme={theme}
       onThemeChange={setTheme}
       reviewLoading={reviewLoading}
+      flowLoading={flowLoading}
       reqLoading={reqLoading}
       mrDescLoading={mrDescLoading}
+      onTriggerFlow={handleTriggerFlow}
       onTriggerReview={handleTriggerReview}
       onTriggerRequirements={handleTriggerRequirements}
       onTriggerMRDescription={handleTriggerMRDescription}

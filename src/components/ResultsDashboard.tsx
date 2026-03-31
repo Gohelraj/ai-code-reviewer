@@ -15,7 +15,7 @@ import { OPENROUTER_MODELS } from "./AISettings";
 import { ThemeToggle } from "./ThemeToggle";
 import { AISettings } from "./AISettings";
 import { exportAsMarkdown, downloadMarkdown, exportAsJSON, downloadJSON } from "../lib/export";
-import { estimateCost, formatCost } from "../lib/cost";
+import { estimateAnalysisCost, formatCost } from "../lib/cost";
 import { getHistory } from "../lib/history";
 import type { HistoryEntry } from "../lib/history";
 import { formatDistanceToNow } from "date-fns";
@@ -29,8 +29,10 @@ interface ResultsDashboardProps {
   theme: "light" | "dark" | "system";
   onThemeChange: (theme: "light" | "dark" | "system") => void;
   reviewLoading: boolean;
+  flowLoading: boolean;
   reqLoading: boolean;
   mrDescLoading: boolean;
+  onTriggerFlow: () => void;
   onTriggerReview: () => void;
   onTriggerRequirements: () => void;
   onTriggerMRDescription: () => void;
@@ -45,16 +47,16 @@ interface ResultsDashboardProps {
   onSelectedFileChange?: (selectedFile?: string) => void;
 }
 
-export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, reqLoading, mrDescLoading, onTriggerReview, onTriggerRequirements, onTriggerMRDescription, prUrl, prToken, onNotesChange, onTokenChange, onLoadHistory, onAIConfigChange, onReviewChatChange, onSelectedIssueChange, onSelectedFileChange }: ResultsDashboardProps) {
+export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, flowLoading, reqLoading, mrDescLoading, onTriggerFlow, onTriggerReview, onTriggerRequirements, onTriggerMRDescription, prUrl, prToken, onNotesChange, onTokenChange, onLoadHistory, onAIConfigChange, onReviewChatChange, onSelectedIssueChange, onSelectedFileChange }: ResultsDashboardProps) {
   const { mrData, summary, executionFlow, codeReview, activeTab, requirementsCheck, mrDescriptionReview } = state;
   const modelLabel = aiConfig?.provider === "openrouter" && aiConfig.apiKey
     ? OPENROUTER_MODELS.find((m) => m.id === aiConfig.model)?.label ?? aiConfig.model
     : null;
+  const reviewModeLabel = (aiConfig?.reviewMode ?? "deep") === "quick" ? "Quick" : "Deep";
 
   if (!mrData) return null;
 
-  const diffText = mrData.files.map((f) => f.patch ?? "").join("\n");
-  const cost = aiConfig?.model ? estimateCost(diffText, aiConfig.model) : null;
+  const cost = aiConfig ? estimateAnalysisCost(mrData.files, aiConfig) : null;
 
   const issueCount = codeReview?.issues.length ?? 0;
   const criticalCount = codeReview?.issues.filter((i) => i.severity === "critical").length ?? 0;
@@ -73,7 +75,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
           if (summary) onTabChange("summary");
           break;
         case "2":
-          if (executionFlow || isAnalyzing) onTabChange("flow");
+          if (executionFlow || flowLoading || summary) onTabChange("flow");
           break;
         case "3":
           onTabChange("review");
@@ -95,7 +97,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [summary, executionFlow, codeReview, requirementsCheck, mrDescriptionReview, state.linkedIssueUrl, activeTab, reviewLoading, isAnalyzing, onTabChange, onTriggerReview, onReset]);
+  }, [summary, executionFlow, codeReview, requirementsCheck, mrDescriptionReview, state.linkedIssueUrl, activeTab, reviewLoading, flowLoading, isAnalyzing, onTabChange, onTriggerReview, onReset]);
 
   const handleFileClick = useCallback((filename: string) => {
     onSelectedFileChange?.(filename);
@@ -216,6 +218,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
               >
                 <Cpu size={11} className="text-accent" />
                 <span className="font-medium text-foreground">{modelLabel}</span>
+                <span className="text-muted-foreground">· {reviewModeLabel}</span>
                 <ChevronDown size={10} className="text-muted-foreground" />
               </button>
             )}
@@ -238,6 +241,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
           onTabChange={onTabChange}
           state={state}
           reviewLoading={reviewLoading}
+          flowLoading={flowLoading}
           reqLoading={reqLoading}
           mrDescLoading={mrDescLoading}
           files={mrData.files}
@@ -259,9 +263,9 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
             issueCount,
             criticalCount,
             warningCount,
-            costLabel: cost ? `Est. ${formatCost(cost.totalCost)}` : undefined,
-          }}
-        />
+              costLabel: cost ? `Start ${formatCost(cost.startCost)} · Review ${formatCost(cost.reviewCost)}` : undefined,
+            }}
+          />
         <main className="flex-1 min-w-0 overflow-y-auto">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 pb-20 sm:pb-6">
         {activeTab === "summary" && summary && (
@@ -273,8 +277,30 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
         {activeTab === "flow" && executionFlow && (
           <ExecutionFlowPanel flow={executionFlow} mrData={mrData} />
         )}
-        {activeTab === "flow" && !executionFlow && isAnalyzing && (
+        {activeTab === "flow" && !executionFlow && flowLoading && (
           <FlowSkeleton />
+        )}
+        {activeTab === "flow" && !executionFlow && !flowLoading && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex flex-col items-center justify-center py-24 text-center"
+          >
+            <div className="w-16 h-16 rounded-2xl bg-secondary flex items-center justify-center mb-5">
+              <GitPullRequest size={24} className="text-muted-foreground" />
+            </div>
+            <h3 className="text-lg font-semibold text-foreground mb-2">Execution Flow</h3>
+            <p className="text-sm text-muted-foreground max-w-sm mb-6 leading-relaxed">
+              Generate the architectural flow only when you need it. This saves one AI call during the initial analysis.
+            </p>
+            <button
+              onClick={onTriggerFlow}
+              className="flex items-center gap-2 px-5 py-2.5 bg-foreground text-background text-sm font-semibold rounded-xl hover:bg-foreground/90 transition-all active:scale-95"
+            >
+              <Play size={14} />
+              Generate Execution Flow
+            </button>
+          </motion.div>
         )}
         {activeTab === "review" && codeReview && (
           <CodeReviewPanel
@@ -309,14 +335,16 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
             </div>
             <h3 className="text-lg font-semibold text-foreground mb-2">Code Review</h3>
             <p className="text-sm text-muted-foreground max-w-sm mb-6 leading-relaxed">
-              Run an in-depth senior-level code review powered by AI. This will analyze code quality, security, performance, and architecture.
+              {(aiConfig?.reviewMode ?? "deep") === "quick"
+                ? "Run a faster, lower-cost review focused on the highest-signal issues first."
+                : "Run an in-depth senior-level code review powered by AI. This will analyze code quality, security, performance, and architecture."}
             </p>
             <button
               onClick={onTriggerReview}
               className="flex items-center gap-2 px-5 py-2.5 bg-foreground text-background text-sm font-semibold rounded-xl hover:bg-foreground/90 transition-all active:scale-95"
             >
               <Play size={14} />
-              Run Code Review
+              {(aiConfig?.reviewMode ?? "deep") === "quick" ? "Run Quick Review" : "Run Deep Review"}
             </button>
           </motion.div>
         )}
@@ -331,7 +359,9 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
             </div>
             <h3 className="text-lg font-semibold text-foreground mb-2">Reviewing Code...</h3>
             <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
-              Performing a comprehensive senior-level code review. This typically takes 15–30 seconds.
+              {(aiConfig?.reviewMode ?? "deep") === "quick"
+                ? "Running a faster high-signal review. This should return sooner and use less context."
+                : "Performing a comprehensive senior-level code review. This typically takes 15–30 seconds."}
             </p>
             <div className="mt-6 w-64 h-1.5 bg-secondary rounded-full overflow-hidden">
               <motion.div

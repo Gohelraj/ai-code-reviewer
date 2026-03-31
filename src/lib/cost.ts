@@ -1,5 +1,9 @@
-// Approximate pricing per 1M tokens (input/output) from OpenRouter as of 2025
-// These are estimates and may change
+import type { AIConfig } from "../components/AISettings";
+import type { FileDiff } from "../types";
+import { estimateReviewContextChars } from "./review-utils";
+
+// Approximate pricing per 1M tokens (input/output) from OpenRouter.
+// These are rough estimates and may change.
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   "anthropic/claude-sonnet-4-6": { input: 3, output: 15 },
   "anthropic/claude-opus-4-6": { input: 15, output: 75 },
@@ -41,16 +45,21 @@ export interface CostEstimate {
   calls: number;
 }
 
-/**
- * Estimate cost for analyzing a PR.
- * We make ~3 API calls: summary, execution flow, code review.
- * Each call sends the diff as context + prompt.
- */
-export function estimateCost(diffText: string, model: string): CostEstimate {
+export interface AnalysisCostBreakdown {
+  startCost: number;
+  reviewCost: number;
+  requirementsCost: number;
+  mrDescriptionCost: number;
+  chatCost: number;
+  fixCost: number;
+  totalCoreCost: number;
+}
+
+function estimateCostForCall(contextText: string, model: string, promptOverhead = 500, outputTokens = 2000): CostEstimate {
   const pricing = MODEL_PRICING[model] ?? DEFAULT_PRICING;
-  const inputTokensPerCall = estimateTokens(diffText) + 500; // +500 for system prompt
-  const outputTokensPerCall = 2000; // avg structured response
-  const calls = 3;
+  const inputTokensPerCall = estimateTokens(contextText) + promptOverhead;
+  const outputTokensPerCall = outputTokens;
+  const calls = 1;
 
   const totalInput = inputTokensPerCall * calls;
   const totalOutput = outputTokensPerCall * calls;
@@ -65,6 +74,40 @@ export function estimateCost(diffText: string, model: string): CostEstimate {
     totalCost,
     perCallCost: totalCost / calls,
     calls,
+  };
+}
+
+export function estimateCost(diffText: string, model: string): CostEstimate {
+  return estimateCostForCall(diffText, model);
+}
+
+export function estimateAnalysisCost(files: FileDiff[], aiConfig: AIConfig): AnalysisCostBreakdown {
+  const diffText = files.map((file) => file.patch ?? "").join("\n");
+  const reviewModel = aiConfig.model;
+  const auxiliaryModel = aiConfig.auxiliaryModel?.trim() || reviewModel;
+  const startMode = aiConfig.analysisStartMode ?? "summary-and-flow";
+  const reviewMode = aiConfig.reviewMode ?? "deep";
+  const reviewContextChars = estimateReviewContextChars(files, reviewMode);
+  const reviewPlaceholder = "x".repeat(reviewContextChars);
+
+  const summaryCost = estimateCostForCall(diffText, auxiliaryModel, 450, 900).totalCost;
+  const flowCost = estimateCostForCall(diffText, auxiliaryModel, 450, 1200).totalCost;
+  const reviewCost = estimateCostForCall(reviewPlaceholder, reviewModel, 900, reviewMode === "quick" ? 1800 : 2600).totalCost;
+  const requirementsCost = estimateCostForCall(diffText, auxiliaryModel, 700, 1800).totalCost;
+  const mrDescriptionCost = estimateCostForCall(diffText, auxiliaryModel, 600, 1600).totalCost;
+  const chatCost = estimateCostForCall(reviewPlaceholder.slice(0, Math.min(reviewPlaceholder.length, 24_000)), auxiliaryModel, 350, 700).totalCost;
+  const fixCost = estimateCostForCall(reviewPlaceholder.slice(0, Math.min(reviewPlaceholder.length, 18_000)), auxiliaryModel, 500, 900).totalCost;
+
+  const startCost = summaryCost + (startMode === "summary-and-flow" ? flowCost : 0);
+
+  return {
+    startCost,
+    reviewCost,
+    requirementsCost,
+    mrDescriptionCost,
+    chatCost,
+    fixCost,
+    totalCoreCost: startCost + reviewCost,
   };
 }
 

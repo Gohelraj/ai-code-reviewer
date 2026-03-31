@@ -39,6 +39,7 @@ interface NavigationSidebarProps {
   onTabChange: (tab: AnalysisState["activeTab"]) => void;
   state: AnalysisState;
   reviewLoading: boolean;
+  flowLoading: boolean;
   reqLoading: boolean;
   mrDescLoading: boolean;
   files: FileDiff[];
@@ -76,7 +77,7 @@ function SidebarTooltip({ children, label }: { children: React.ReactNode; label:
 
 /* ───── Component ───── */
 export function NavigationSidebar({
-  activeTab, onTabChange, state, reviewLoading, reqLoading, mrDescLoading,
+  activeTab, onTabChange, state, reviewLoading, flowLoading, reqLoading, mrDescLoading,
   files, onFileClick,
   onExport, onExportJSON, onCopyClipboard, onPrint, hasExportData,
   notesValue, onNotesChange,
@@ -161,9 +162,9 @@ export function NavigationSidebar({
         break;
       case "flow":
         isAvailable = !!executionFlow;
-        isLoading = !executionFlow && isAnalyzing;
+        isLoading = flowLoading;
+        isPending = !executionFlow && !flowLoading;
         if (executionFlow) preview = `${executionFlow.flowGroups.length} layers`;
-        if (!isAvailable && !isLoading) disabledReason = "Waiting for analysis...";
         break;
       case "review":
         isAvailable = !!codeReview;
@@ -202,10 +203,11 @@ export function NavigationSidebar({
   };
 
   /* Are there pending manual steps that could use attention? */
+  const pendingFlow = !executionFlow && !flowLoading;
   const pendingReview = !codeReview && !reviewLoading;
   const pendingReq = !!state.linkedIssueUrl && !requirementsCheck && !reqLoading;
   const pendingMRDesc = !mrDescriptionReview && !mrDescLoading;
-  const pendingCount = [pendingReview, pendingReq, pendingMRDesc].filter(Boolean).length;
+  const pendingCount = [pendingFlow, pendingReview, pendingReq, pendingMRDesc].filter(Boolean).length;
 
   /* ── Render ── */
   return (
@@ -334,6 +336,8 @@ export function NavigationSidebar({
                 <span className="text-[11px] font-semibold text-accent">{pendingCount} pending check{pendingCount !== 1 ? "s" : ""}</span>
               </div>
               <p className="text-[10px] text-muted-foreground leading-relaxed">
+                {pendingFlow && "Execution Flow"}
+                {pendingFlow && (pendingReview || pendingMRDesc || pendingReq) && ", "}
                 {pendingReview && "Code Review"}
                 {pendingReview && (pendingMRDesc || pendingReq) && ", "}
                 {pendingMRDesc && "MR Description"}
