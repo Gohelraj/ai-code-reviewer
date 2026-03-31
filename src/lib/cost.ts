@@ -1,4 +1,5 @@
 import type { AIConfig } from "../components/AISettings";
+import { normalizeOpenRouterModel, normalizeOptionalOpenRouterModel } from "../components/AISettings";
 import type { FileDiff } from "../types";
 import { estimateReviewContextChars } from "./review-utils";
 
@@ -10,8 +11,9 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   "anthropic/claude-sonnet-4-5": { input: 3, output: 15 },
   "anthropic/claude-opus-4-5": { input: 15, output: 75 },
   "anthropic/claude-3.5-sonnet": { input: 3, output: 15 },
-  "openai/gpt-5.3": { input: 3, output: 12 },
-  "openai/gpt-5.3-mini": { input: 0.3, output: 1.2 },
+  "openai/gpt-5.4": { input: 2.5, output: 15 },
+  "openai/gpt-5.4-mini": { input: 0.75, output: 4.5 },
+  "openai/gpt-5-mini": { input: 0.25, output: 2 },
   "openai/gpt-4.1": { input: 2, output: 8 },
   "openai/gpt-4o": { input: 2.5, output: 10 },
   "openai/gpt-4o-mini": { input: 0.15, output: 0.6 },
@@ -83,8 +85,8 @@ export function estimateCost(diffText: string, model: string): CostEstimate {
 
 export function estimateAnalysisCost(files: FileDiff[], aiConfig: AIConfig): AnalysisCostBreakdown {
   const diffText = files.map((file) => file.patch ?? "").join("\n");
-  const reviewModel = aiConfig.model;
-  const auxiliaryModel = aiConfig.auxiliaryModel?.trim() || reviewModel;
+  const reviewModel = normalizeOpenRouterModel(aiConfig.model);
+  const auxiliaryModel = normalizeOptionalOpenRouterModel(aiConfig.auxiliaryModel) || reviewModel;
   const startMode = aiConfig.analysisStartMode ?? "summary-and-flow";
   const reviewMode = aiConfig.reviewMode ?? "deep";
   const reviewContextChars = estimateReviewContextChars(files, reviewMode);

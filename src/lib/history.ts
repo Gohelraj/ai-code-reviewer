@@ -1,5 +1,6 @@
 import type { AnalysisState } from "../types";
 import type { AIConfig } from "../components/AISettings";
+import { sanitizeAIConfig } from "../components/AISettings";
 
 export interface HistoryEntry {
   id: string;
@@ -38,6 +39,7 @@ export async function saveAnalysis(
   aiConfig: AIConfig,
 ): Promise<void> {
   try {
+    const normalizedConfig = sanitizeAIConfig(aiConfig);
     const db = await openDB();
     const tx = db.transaction(STORE_NAME, "readwrite");
     const store = tx.objectStore(STORE_NAME);
@@ -47,10 +49,10 @@ export async function saveAnalysis(
       url,
       prTitle: state.mrData?.pr.title ?? "Unknown PR",
       platform: state.mrData?.platform ?? "github",
-      model: aiConfig.model,
+      model: normalizedConfig.model,
       timestamp: Date.now(),
       state,
-      aiConfig,
+      aiConfig: normalizedConfig,
     };
 
     store.add(entry);
@@ -93,7 +95,14 @@ export async function getHistory(): Promise<HistoryEntry[]> {
     return new Promise((resolve, reject) => {
       const request = index.getAll();
       request.onsuccess = () => {
-        const entries = request.result as HistoryEntry[];
+        const entries = (request.result as HistoryEntry[]).map((entry) => {
+          const normalizedConfig = sanitizeAIConfig(entry.aiConfig);
+          return {
+            ...entry,
+            model: normalizedConfig.model,
+            aiConfig: normalizedConfig,
+          };
+        });
         // Return newest first
         resolve(entries.reverse());
       };
@@ -125,7 +134,19 @@ export async function loadAnalysis(id: string): Promise<HistoryEntry | null> {
     const store = tx.objectStore(STORE_NAME);
     return new Promise((resolve, reject) => {
       const request = store.get(id);
-      request.onsuccess = () => resolve(request.result as HistoryEntry | null);
+      request.onsuccess = () => {
+        const entry = request.result as HistoryEntry | null;
+        if (!entry) {
+          resolve(null);
+          return;
+        }
+        const normalizedConfig = sanitizeAIConfig(entry.aiConfig);
+        resolve({
+          ...entry,
+          model: normalizedConfig.model,
+          aiConfig: normalizedConfig,
+        });
+      };
       request.onerror = () => reject(request.error);
     });
   } catch {

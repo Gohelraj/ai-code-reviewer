@@ -32,14 +32,20 @@ export interface AIConfig {
   lastPresetId?: string;
 }
 
+export const DEFAULT_PRIMARY_MODEL = "anthropic/claude-sonnet-4-6";
+export const DEFAULT_POSTING_MODE: PostingMode = "inline";
+export const DEFAULT_ANALYSIS_START_MODE: AnalysisStartMode = "summary-and-flow";
+export const DEFAULT_REVIEW_MODE: ReviewMode = "deep";
+
 export const OPENROUTER_MODELS = [
   { id: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6", group: "Anthropic", recommended: true },
   { id: "anthropic/claude-opus-4-6", label: "Claude Opus 4.6", group: "Anthropic" },
   { id: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5", group: "Anthropic" },
   { id: "anthropic/claude-opus-4-5", label: "Claude Opus 4.5", group: "Anthropic" },
   { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet", group: "Anthropic" },
-  { id: "openai/gpt-5.3", label: "GPT-5.3", group: "OpenAI", recommended: true },
-  { id: "openai/gpt-5.3-mini", label: "GPT-5.3 Mini", group: "OpenAI" },
+  { id: "openai/gpt-5.4", label: "GPT-5.4", group: "OpenAI", recommended: true },
+  { id: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini", group: "OpenAI" },
+  { id: "openai/gpt-5-mini", label: "GPT-5 Mini", group: "OpenAI" },
   { id: "openai/gpt-4.1", label: "GPT-4.1", group: "OpenAI" },
   { id: "openai/gpt-4o", label: "GPT-4o", group: "OpenAI" },
   { id: "openai/gpt-4o-mini", label: "GPT-4o Mini", group: "OpenAI" },
@@ -58,15 +64,58 @@ export const OPENROUTER_MODELS = [
   { id: "x-ai/grok-3", label: "Grok 3", group: "xAI" },
 ];
 
+const LEGACY_MODEL_MIGRATIONS: Record<string, string> = {
+  "openai/gpt-5.3": "openai/gpt-5.4",
+  "openai/gpt-5.3-mini": "openai/gpt-5.4-mini",
+};
+
+const OPENROUTER_MODEL_IDS = new Set(OPENROUTER_MODELS.map((model) => model.id));
+
+function canonicalizeModelId(model?: string | null): string {
+  const trimmed = model?.trim() ?? "";
+  if (!trimmed) return "";
+  return LEGACY_MODEL_MIGRATIONS[trimmed] ?? trimmed;
+}
+
+export function isSupportedOpenRouterModel(model?: string | null): boolean {
+  const canonical = canonicalizeModelId(model);
+  return !!canonical && OPENROUTER_MODEL_IDS.has(canonical);
+}
+
+export function normalizeOpenRouterModel(model?: string | null, fallback = DEFAULT_PRIMARY_MODEL): string {
+  const canonical = canonicalizeModelId(model);
+  if (canonical && OPENROUTER_MODEL_IDS.has(canonical)) {
+    return canonical;
+  }
+  return fallback;
+}
+
+export function normalizeOptionalOpenRouterModel(model?: string | null): string {
+  const canonical = canonicalizeModelId(model);
+  if (!canonical) return "";
+  return OPENROUTER_MODEL_IDS.has(canonical) ? canonical : "";
+}
+
+function sanitizePreset(preset: AIPreset): AIPreset {
+  return {
+    ...preset,
+    model: normalizeOpenRouterModel(preset.model),
+    auxiliaryModel: normalizeOptionalOpenRouterModel(preset.auxiliaryModel),
+    postingMode: preset.postingMode ?? DEFAULT_POSTING_MODE,
+    analysisStartMode: preset.analysisStartMode ?? DEFAULT_ANALYSIS_START_MODE,
+    reviewMode: preset.reviewMode ?? DEFAULT_REVIEW_MODE,
+  };
+}
+
 const DEFAULT_CONFIG: AIConfig = {
   provider: "openrouter",
   apiKey: "",
-  model: "anthropic/claude-sonnet-4-6",
+  model: DEFAULT_PRIMARY_MODEL,
   auxiliaryModel: "",
   customRules: "",
-  postingMode: "inline",
-  analysisStartMode: "summary-and-flow",
-  reviewMode: "deep",
+  postingMode: DEFAULT_POSTING_MODE,
+  analysisStartMode: DEFAULT_ANALYSIS_START_MODE,
+  reviewMode: DEFAULT_REVIEW_MODE,
   presets: [],
   lastPresetId: "",
 };
@@ -86,17 +135,42 @@ interface RepoDefaults {
   defaultTab?: AnalysisState["activeTab"];
 }
 
+function sanitizeRepoDefaults(defaults: RepoDefaults): RepoDefaults {
+  return {
+    ...defaults,
+    model: defaults.model ? normalizeOpenRouterModel(defaults.model) : undefined,
+    auxiliaryModel: defaults.auxiliaryModel ? normalizeOptionalOpenRouterModel(defaults.auxiliaryModel) : undefined,
+  };
+}
+
+export function sanitizeAIConfig(config: AIConfig): AIConfig {
+  const presets = (config.presets ?? []).map(sanitizePreset);
+  const lastPresetExists = presets.some((preset) => preset.id === config.lastPresetId);
+
+  return {
+    ...DEFAULT_CONFIG,
+    ...config,
+    model: normalizeOpenRouterModel(config.model),
+    auxiliaryModel: normalizeOptionalOpenRouterModel(config.auxiliaryModel),
+    postingMode: config.postingMode ?? DEFAULT_POSTING_MODE,
+    analysisStartMode: config.analysisStartMode ?? DEFAULT_ANALYSIS_START_MODE,
+    reviewMode: config.reviewMode ?? DEFAULT_REVIEW_MODE,
+    presets,
+    lastPresetId: lastPresetExists ? config.lastPresetId : "",
+  };
+}
+
 export function loadAIConfig(): AIConfig {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) return { ...DEFAULT_CONFIG, ...JSON.parse(stored) };
+    if (stored) return sanitizeAIConfig({ ...DEFAULT_CONFIG, ...JSON.parse(stored) });
   } catch {}
-  return { ...DEFAULT_CONFIG };
+  return sanitizeAIConfig({ ...DEFAULT_CONFIG });
 }
 
 export function saveAIConfig(config: AIConfig) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitizeAIConfig(config)));
   } catch {}
 }
 
@@ -106,7 +180,7 @@ export function loadRepoDefaults(repoKey?: string | null): RepoDefaults | null {
     const stored = localStorage.getItem(REPO_DEFAULTS_KEY);
     if (!stored) return null;
     const parsed = JSON.parse(stored) as Record<string, RepoDefaults>;
-    return parsed[repoKey] ?? null;
+    return parsed[repoKey] ? sanitizeRepoDefaults(parsed[repoKey]) : null;
   } catch {
     return null;
   }
@@ -116,41 +190,42 @@ export function saveRepoDefaults(repoKey: string, defaults: Partial<RepoDefaults
   try {
     const stored = localStorage.getItem(REPO_DEFAULTS_KEY);
     const parsed = stored ? JSON.parse(stored) as Record<string, RepoDefaults> : {};
-    parsed[repoKey] = { ...(parsed[repoKey] ?? {}), ...defaults };
+    parsed[repoKey] = sanitizeRepoDefaults({ ...(parsed[repoKey] ?? {}), ...defaults });
     localStorage.setItem(REPO_DEFAULTS_KEY, JSON.stringify(parsed));
   } catch {}
 }
 
 export function resolveAIConfigForRepo(baseConfig: AIConfig, repoKey?: string | null): AIConfig {
+  const sanitizedBaseConfig = sanitizeAIConfig(baseConfig);
   const defaults = loadRepoDefaults(repoKey);
-  if (!defaults) return { ...DEFAULT_CONFIG, ...baseConfig };
+  if (!defaults) return sanitizeAIConfig({ ...DEFAULT_CONFIG, ...sanitizedBaseConfig });
 
-  const preset = baseConfig.presets?.find((item) => item.id === defaults.lastPresetId);
+  const preset = sanitizedBaseConfig.presets?.find((item) => item.id === defaults.lastPresetId);
   if (preset) {
-    return {
+    return sanitizeAIConfig({
       ...DEFAULT_CONFIG,
-      ...baseConfig,
+      ...sanitizedBaseConfig,
       model: preset.model,
-      auxiliaryModel: preset.auxiliaryModel ?? baseConfig.auxiliaryModel ?? "",
+      auxiliaryModel: preset.auxiliaryModel ?? sanitizedBaseConfig.auxiliaryModel ?? "",
       customRules: preset.customRules,
-      postingMode: preset.postingMode ?? defaults.postingMode ?? baseConfig.postingMode ?? "inline",
-      analysisStartMode: preset.analysisStartMode ?? defaults.analysisStartMode ?? baseConfig.analysisStartMode ?? "summary-and-flow",
-      reviewMode: preset.reviewMode ?? defaults.reviewMode ?? baseConfig.reviewMode ?? "deep",
+      postingMode: preset.postingMode ?? defaults.postingMode ?? sanitizedBaseConfig.postingMode ?? DEFAULT_POSTING_MODE,
+      analysisStartMode: preset.analysisStartMode ?? defaults.analysisStartMode ?? sanitizedBaseConfig.analysisStartMode ?? DEFAULT_ANALYSIS_START_MODE,
+      reviewMode: preset.reviewMode ?? defaults.reviewMode ?? sanitizedBaseConfig.reviewMode ?? DEFAULT_REVIEW_MODE,
       lastPresetId: preset.id,
-    };
+    });
   }
 
-  return {
+  return sanitizeAIConfig({
     ...DEFAULT_CONFIG,
-    ...baseConfig,
-    model: defaults.model ?? baseConfig.model,
-    auxiliaryModel: defaults.auxiliaryModel ?? baseConfig.auxiliaryModel ?? "",
-    customRules: defaults.customRules ?? baseConfig.customRules,
-    postingMode: defaults.postingMode ?? baseConfig.postingMode ?? "inline",
-    analysisStartMode: defaults.analysisStartMode ?? baseConfig.analysisStartMode ?? "summary-and-flow",
-    reviewMode: defaults.reviewMode ?? baseConfig.reviewMode ?? "deep",
-    lastPresetId: defaults.lastPresetId ?? baseConfig.lastPresetId,
-  };
+    ...sanitizedBaseConfig,
+    model: defaults.model ?? sanitizedBaseConfig.model,
+    auxiliaryModel: defaults.auxiliaryModel ?? sanitizedBaseConfig.auxiliaryModel ?? "",
+    customRules: defaults.customRules ?? sanitizedBaseConfig.customRules,
+    postingMode: defaults.postingMode ?? sanitizedBaseConfig.postingMode ?? DEFAULT_POSTING_MODE,
+    analysisStartMode: defaults.analysisStartMode ?? sanitizedBaseConfig.analysisStartMode ?? DEFAULT_ANALYSIS_START_MODE,
+    reviewMode: defaults.reviewMode ?? sanitizedBaseConfig.reviewMode ?? DEFAULT_REVIEW_MODE,
+    lastPresetId: defaults.lastPresetId ?? sanitizedBaseConfig.lastPresetId,
+  });
 }
 
 interface AISettingsProps {

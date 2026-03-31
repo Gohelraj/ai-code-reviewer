@@ -10,7 +10,7 @@ import { saveAnalysis } from "./lib/history";
 import type { HistoryEntry } from "./lib/history";
 import type { AnalysisState } from "./types";
 import type { AIConfig } from "./components/AISettings";
-import { loadRepoDefaults, saveAIConfig, saveRepoDefaults } from "./components/AISettings";
+import { loadRepoDefaults, sanitizeAIConfig, saveAIConfig, saveRepoDefaults } from "./components/AISettings";
 import { useDarkMode } from "./lib/useDarkMode";
 import { computeReviewDiff, getRepoKeyFromUrl, readUiStateFromLocation, writeUiStateToLocation } from "./lib/review-utils";
 
@@ -56,6 +56,7 @@ function App() {
   }, [state.step, state.activeTab, state.selectedFile, state.selectedIssueId]);
 
   const handleAnalyze = useCallback(async ({ url, token, aiConfig, issueUrl }: SubmitPayload) => {
+    const normalizedConfig = sanitizeAIConfig(aiConfig);
     const repoDefaults = loadRepoDefaults(getRepoKeyFromUrl(url));
     setState({
       ...createInitialState(),
@@ -63,7 +64,7 @@ function App() {
       activeTab: repoDefaults?.defaultTab ?? "summary",
       reviewChat: [],
     });
-    setActiveAIConfig(aiConfig);
+    setActiveAIConfig(normalizedConfig);
     setFlowLoading(false);
     setAnalysisUrl(url);
     setAnalysisToken(token);
@@ -85,15 +86,15 @@ function App() {
 
       // Step 2: Summarize + flow in parallel (requirements & MR desc are manual)
       updateState({ step: "summarizing" });
-      const summaryPromise = analyzeSummary(mrData, aiConfig).then((summary) => {
+      const summaryPromise = analyzeSummary(mrData, normalizedConfig).then((summary) => {
         updateState({ summary, activeTab: "summary" });
         return summary;
       });
 
-      if ((aiConfig.analysisStartMode ?? "summary-and-flow") === "summary-and-flow") {
+      if ((normalizedConfig.analysisStartMode ?? "summary-and-flow") === "summary-and-flow") {
         updateState({ step: "flowing" });
         setFlowLoading(true);
-        const flowPromise = analyzeExecutionFlow(mrData, aiConfig).then((executionFlow) => {
+        const flowPromise = analyzeExecutionFlow(mrData, normalizedConfig).then((executionFlow) => {
           updateState({ executionFlow });
           return executionFlow;
         }).finally(() => {
@@ -112,7 +113,7 @@ function App() {
       // Save to history
       // We need to get the latest state, so use a callback
       setState((prev) => {
-        saveAnalysis(url, prev, aiConfig);
+        saveAnalysis(url, prev, normalizedConfig);
         return prev;
       });
     } catch (err) {
@@ -136,7 +137,7 @@ function App() {
 
   const handleLoadHistory = useCallback((entry: HistoryEntry) => {
     setState(entry.state);
-    setActiveAIConfig(entry.aiConfig);
+    setActiveAIConfig(sanitizeAIConfig(entry.aiConfig));
     setAnalysisUrl(entry.url);
     setReviewLoading(false);
     setFlowLoading(false);
@@ -172,18 +173,19 @@ function App() {
   }, []);
 
   const handleAIConfigChange = useCallback((config: AIConfig) => {
-    setActiveAIConfig(config);
-    saveAIConfig(config);
+    const normalizedConfig = sanitizeAIConfig(config);
+    setActiveAIConfig(normalizedConfig);
+    saveAIConfig(normalizedConfig);
     const repoKey = getRepoKeyFromUrl(analysisUrl);
     if (repoKey) {
       saveRepoDefaults(repoKey, {
-        model: config.model,
-        auxiliaryModel: config.auxiliaryModel ?? "",
-        customRules: config.customRules ?? "",
-        postingMode: config.postingMode ?? "inline",
-        analysisStartMode: config.analysisStartMode ?? "summary-and-flow",
-        reviewMode: config.reviewMode ?? "deep",
-        lastPresetId: config.lastPresetId,
+        model: normalizedConfig.model,
+        auxiliaryModel: normalizedConfig.auxiliaryModel ?? "",
+        customRules: normalizedConfig.customRules ?? "",
+        postingMode: normalizedConfig.postingMode ?? "inline",
+        analysisStartMode: normalizedConfig.analysisStartMode ?? "summary-and-flow",
+        reviewMode: normalizedConfig.reviewMode ?? "deep",
+        lastPresetId: normalizedConfig.lastPresetId,
       });
     }
   }, [analysisUrl]);

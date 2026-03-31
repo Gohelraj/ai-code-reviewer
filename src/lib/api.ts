@@ -1,4 +1,5 @@
 import type { MRData, ChangeSummary, ExecutionFlow, CodeReview, RequirementsCheck, MRDescriptionReview, FileDiff, PRInfo } from "../types";
+import { DEFAULT_PRIMARY_MODEL, normalizeOpenRouterModel } from "../components/AISettings";
 import type { AIConfig, ReviewMode } from "../components/AISettings";
 import { computeRiskHotspots, computeTestGapSummary, getReviewContextPlan } from "./review-utils";
 import { buildReviewerSuggestions, parseCodeowners } from "./codeowners";
@@ -180,44 +181,102 @@ interface OpenRouterMessage {
   content: string;
 }
 
+function buildOpenRouterHeaders(apiKey: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+    "HTTP-Referer": window.location.origin,
+    "X-Title": "AI Code Reviewer",
+  };
+}
+
+function isInvalidModelError(status: number, errText: string): boolean {
+  return status === 400 && /not a valid model ID/i.test(errText);
+}
+
+async function sendOpenRouterRequest(
+  apiKey: string,
+  model: string,
+  payload: Record<string, unknown>,
+): Promise<Response> {
+  return fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: buildOpenRouterHeaders(apiKey),
+    body: JSON.stringify({
+      model,
+      ...payload,
+    }),
+  });
+}
+
+async function requestOpenRouterWithFallback<T>(
+  apiKey: string,
+  requestedModel: string,
+  payload: Record<string, unknown>,
+  parse: (response: Response) => Promise<T>,
+): Promise<T> {
+  const normalizedModel = normalizeOpenRouterModel(requestedModel, DEFAULT_PRIMARY_MODEL);
+  const modelsToTry = normalizedModel === DEFAULT_PRIMARY_MODEL
+    ? [normalizedModel]
+    : [normalizedModel, DEFAULT_PRIMARY_MODEL];
+
+  let lastError: Error | null = null;
+
+  for (const model of modelsToTry) {
+    const response = await sendOpenRouterRequest(apiKey, model, payload);
+    if (response.ok) {
+      return parse(response);
+    }
+
+    const errText = await response.text();
+    if (isInvalidModelError(response.status, errText) && model !== DEFAULT_PRIMARY_MODEL) {
+      console.warn(`OpenRouter rejected model "${model}". Retrying with "${DEFAULT_PRIMARY_MODEL}".`);
+      lastError = new Error(`OpenRouter error ${response.status}: ${errText}`);
+      continue;
+    }
+
+    throw new Error(`OpenRouter error ${response.status}: ${errText}`);
+  }
+
+  throw lastError ?? new Error(`OpenRouter rejected the configured model and fallback "${DEFAULT_PRIMARY_MODEL}".`);
+}
+
 async function callOpenRouter<T>(
   apiKey: string,
   model: string,
   messages: OpenRouterMessage[],
   schema: Record<string, unknown>
 ): Promise<T> {
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": window.location.origin,
-      "X-Title": "AI Code Reviewer",
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "analysis_result",
-          strict: true,
-          schema,
-        },
+  return requestOpenRouterWithFallback(apiKey, model, {
+    messages,
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "analysis_result",
+        strict: true,
+        schema,
       },
-    }),
+    },
+  }, async (res) => {
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error("OpenRouter returned empty response");
+
+    return JSON.parse(content) as T;
   });
+}
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`OpenRouter error ${res.status}: ${errText}`);
-  }
-
-  const data = await res.json();
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("OpenRouter returned empty response");
-
-  return JSON.parse(content) as T;
+async function callOpenRouterText(
+  apiKey: string,
+  model: string,
+  messages: OpenRouterMessage[],
+): Promise<string> {
+  return requestOpenRouterWithFallback(apiKey, model, { messages }, async (res) => {
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content?.trim();
+    if (!content) throw new Error("OpenRouter returned empty response");
+    return content;
+  });
 }
 
 // ─── JSON schemas (mirror of edge function) ───────────────────────────────────
@@ -550,9 +609,9 @@ export async function prepareMRDataForReview(mrData: MRData, aiConfig: AIConfig,
 
 function getModelForTask(aiConfig: AIConfig, task: "summary" | "flow" | "review" | "requirements" | "mr-description" | "chat" | "fix"): string {
   if (task === "review") {
-    return aiConfig.model;
+    return normalizeOpenRouterModel(aiConfig.model, DEFAULT_PRIMARY_MODEL);
   }
-  return aiConfig.auxiliaryModel?.trim() || aiConfig.model;
+  return normalizeOpenRouterModel(aiConfig.auxiliaryModel?.trim() || aiConfig.model, DEFAULT_PRIMARY_MODEL);
 }
 
 const reviewerSuggestionCache = new Map<string, Promise<CodeReview["reviewerSuggestions"]>>();
@@ -963,24 +1022,14 @@ export async function askReviewQuestion(
 
   const context = buildContextAwareDiff(mrData.files, "quick");
 
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${aiConfig.apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": window.location.origin,
-      "X-Title": "AI Code Reviewer",
+  return callOpenRouterText(aiConfig.apiKey, getModelForTask(aiConfig, "chat"), [
+    {
+      role: "system",
+      content: "You are a senior engineer answering focused questions about a pull or merge request. Be precise, grounded in the provided diff and file context, and say when the answer is uncertain.",
     },
-    body: JSON.stringify({
-      model: getModelForTask(aiConfig, "chat"),
-      messages: [
-        {
-          role: "system",
-          content: "You are a senior engineer answering focused questions about a pull or merge request. Be precise, grounded in the provided diff and file context, and say when the answer is uncertain.",
-        },
-        {
-          role: "user",
-          content: `PR Title: ${mrData.pr.title}
+    {
+      role: "user",
+      content: `PR Title: ${mrData.pr.title}
 PR Description: ${mrData.pr.description || "No description"}
 Branch: ${mrData.pr.headBranch} → ${mrData.pr.baseBranch}
 
@@ -988,20 +1037,8 @@ FILE CONTEXT + DIFFS:
 ${context}
 
 Question: ${question}`,
-        },
-      ],
-    }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`OpenRouter error ${res.status}: ${errText}`);
-  }
-
-  const data = await res.json();
-  const content = data.choices?.[0]?.message?.content?.trim();
-  if (!content) throw new Error("OpenRouter returned empty response");
-  return content;
+    },
+  ]);
 }
 
 export async function generateIssueFix(
@@ -1017,24 +1054,14 @@ export async function generateIssueFix(
     : mrData;
   const context = getRelevantFileContext(hydrated, issue.file, "deep");
 
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${aiConfig.apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": window.location.origin,
-      "X-Title": "AI Code Reviewer",
+  return callOpenRouterText(aiConfig.apiKey, getModelForTask(aiConfig, "fix"), [
+    {
+      role: "system",
+      content: "You are a senior engineer generating a concrete fix suggestion for a review issue. Return only the proposed code or patch-style snippet with a short introductory sentence if needed.",
     },
-    body: JSON.stringify({
-      model: getModelForTask(aiConfig, "fix"),
-      messages: [
-        {
-          role: "system",
-          content: "You are a senior engineer generating a concrete fix suggestion for a review issue. Return only the proposed code or patch-style snippet with a short introductory sentence if needed.",
-        },
-        {
-          role: "user",
-          content: `Issue title: ${issue.title}
+    {
+      role: "user",
+      content: `Issue title: ${issue.title}
 Issue description: ${issue.description}
 Issue rationale: ${issue.rationale}
 File: ${issue.file ?? "Unknown"}
@@ -1047,18 +1074,6 @@ ${issue.suggestedFix || "(not provided)"}
 
 Relevant file context:
 ${context}`,
-        },
-      ],
-    }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`OpenRouter error ${res.status}: ${errText}`);
-  }
-
-  const data = await res.json();
-  const content = data.choices?.[0]?.message?.content?.trim();
-  if (!content) throw new Error("OpenRouter returned empty response");
-  return content;
+    },
+  ]);
 }
