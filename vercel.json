@@ -3,7 +3,6 @@
   "buildCommand": "vite build",
   "outputDirectory": "dist",
   "rewrites": [
-    { "source": "/api/gitlab/(.*)", "destination": "/api/gitlab" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
