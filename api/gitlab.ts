@@ -1,15 +1,14 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const { path } = req.query;
-  if (!path) return res.status(400).json({ error: "Missing path" });
+  // Extract the GitLab path from the full URL: /api/gitlab/api/v4/... → api/v4/...
+  const prefix = "/api/gitlab/";
+  const fullPath = req.url ?? "";
+  const idx = fullPath.indexOf(prefix);
+  if (idx === -1) return res.status(400).json({ error: "Invalid request path" });
 
-  const gitlabPath = Array.isArray(path) ? path.join("/") : path;
-
-  // Prevent SSRF — only allow requests to gitlab.com API
-  if (/[^a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]/.test(gitlabPath)) {
-    return res.status(400).json({ error: "Invalid path" });
-  }
+  const gitlabPath = fullPath.slice(idx + prefix.length);
+  if (!gitlabPath) return res.status(400).json({ error: "Missing GitLab path" });
 
   const targetUrl = `https://gitlab.com/${gitlabPath}`;
 

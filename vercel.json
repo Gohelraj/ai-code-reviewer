@@ -1,8 +1,15 @@
 {
-  "framework": "vite",
-  "buildCommand": "vite build",
-  "outputDirectory": "dist",
-  "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
-  ]
+    "framework": "vite",
+    "buildCommand": "vite build",
+    "outputDirectory": "dist",
+    "rewrites": [
+        {
+            "source": "/api/gitlab/:path*",
+            "destination": "/api/gitlab"
+        },
+        {
+            "source": "/((?!api/).*)",
+            "destination": "/index.html"
+        }
+    ]
 }
