@@ -9,8 +9,9 @@ import { CodeReviewPanel } from "./CodeReviewPanel";
 import { RequirementsPanel } from "./RequirementsPanel";
 import { MRDescriptionPanel } from "./MRDescriptionPanel";
 import { NavigationSidebar } from "./NavigationSidebar";
+import { ReviewModePicker } from "./ReviewModePicker";
 import { SummarySkeleton, FlowSkeleton } from "./Skeleton";
-import type { AIConfig } from "./AISettings";
+import type { AIConfig, ReviewMode } from "./AISettings";
 import { OPENROUTER_MODELS } from "./AISettings";
 import { ThemeToggle } from "./ThemeToggle";
 import { AISettings } from "./AISettings";
@@ -33,7 +34,7 @@ interface ResultsDashboardProps {
   reqLoading: boolean;
   mrDescLoading: boolean;
   onTriggerFlow: () => void;
-  onTriggerReview: () => void;
+  onTriggerReview: (reviewMode?: ReviewMode) => void;
   onTriggerRequirements: () => void;
   onTriggerMRDescription: () => void;
   prUrl?: string;
@@ -49,14 +50,16 @@ interface ResultsDashboardProps {
 
 export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, flowLoading, reqLoading, mrDescLoading, onTriggerFlow, onTriggerReview, onTriggerRequirements, onTriggerMRDescription, prUrl, prToken, onNotesChange, onTokenChange, onLoadHistory, onAIConfigChange, onReviewChatChange, onSelectedIssueChange, onSelectedFileChange }: ResultsDashboardProps) {
   const { mrData, summary, executionFlow, codeReview, activeTab, requirementsCheck, mrDescriptionReview } = state;
+  const [reviewRunMode, setReviewRunMode] = useState<ReviewMode>(aiConfig?.reviewMode ?? "deep");
   const modelLabel = aiConfig?.provider === "openrouter" && aiConfig.apiKey
     ? OPENROUTER_MODELS.find((m) => m.id === aiConfig.model)?.label ?? aiConfig.model
     : null;
-  const reviewModeLabel = (aiConfig?.reviewMode ?? "deep") === "quick" ? "Quick" : "Deep";
+  const reviewModeLabel = reviewRunMode === "quick" ? "Quick" : "Deep";
 
   if (!mrData) return null;
 
-  const cost = aiConfig ? estimateAnalysisCost(mrData.files, aiConfig) : null;
+  const effectiveAIConfig = aiConfig ? { ...aiConfig, reviewMode: reviewRunMode } : null;
+  const cost = effectiveAIConfig ? estimateAnalysisCost(mrData.files, effectiveAIConfig) : null;
 
   const issueCount = codeReview?.issues.length ?? 0;
   const criticalCount = codeReview?.issues.filter((i) => i.severity === "critical").length ?? 0;
@@ -88,7 +91,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
           break;
         case "r":
         case "R":
-          if (activeTab === "review" && !codeReview && !reviewLoading) onTriggerReview();
+          if (activeTab === "review" && !codeReview && !reviewLoading) onTriggerReview(reviewRunMode);
           break;
         case "Escape":
           onReset();
@@ -97,7 +100,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [summary, executionFlow, codeReview, requirementsCheck, mrDescriptionReview, state.linkedIssueUrl, activeTab, reviewLoading, flowLoading, isAnalyzing, onTabChange, onTriggerReview, onReset]);
+  }, [summary, executionFlow, codeReview, requirementsCheck, mrDescriptionReview, state.linkedIssueUrl, activeTab, reviewLoading, flowLoading, isAnalyzing, onTabChange, onTriggerReview, onReset, reviewRunMode]);
 
   const handleFileClick = useCallback((filename: string) => {
     onSelectedFileChange?.(filename);
@@ -172,6 +175,10 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
       getHistory().then((entries) => setHistoryEntries(entries.slice(0, 10)));
     }
   }, [historyOpen]);
+
+  useEffect(() => {
+    setReviewRunMode(aiConfig?.reviewMode ?? "deep");
+  }, [aiConfig?.reviewMode]);
 
   useEffect(() => {
     setScrollToFile(state.selectedFile ?? null);
@@ -311,6 +318,8 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
             previousReview={state.previousReview}
             reviewLoading={reviewLoading}
             onTriggerReview={onTriggerReview}
+            reviewMode={reviewRunMode}
+            onReviewModeChange={setReviewRunMode}
             onTokenChange={onTokenChange}
             postingMode={aiConfig?.postingMode}
             selectedIssueId={state.selectedIssueId}
@@ -335,16 +344,19 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
             </div>
             <h3 className="text-lg font-semibold text-foreground mb-2">Code Review</h3>
             <p className="text-sm text-muted-foreground max-w-sm mb-6 leading-relaxed">
-              {(aiConfig?.reviewMode ?? "deep") === "quick"
+              {reviewRunMode === "quick"
                 ? "Run a faster, lower-cost review focused on the highest-signal issues first."
                 : "Run an in-depth senior-level code review powered by AI. This will analyze code quality, security, performance, and architecture."}
             </p>
+            <div className="w-full max-w-md mb-5 text-left">
+              <ReviewModePicker value={reviewRunMode} onChange={setReviewRunMode} disabled={reviewLoading} />
+            </div>
             <button
-              onClick={onTriggerReview}
+              onClick={() => onTriggerReview(reviewRunMode)}
               className="flex items-center gap-2 px-5 py-2.5 bg-foreground text-background text-sm font-semibold rounded-xl hover:bg-foreground/90 transition-all active:scale-95"
             >
               <Play size={14} />
-              {(aiConfig?.reviewMode ?? "deep") === "quick" ? "Run Quick Review" : "Run Deep Review"}
+              {reviewRunMode === "quick" ? "Run Quick Review" : "Run Deep Review"}
             </button>
           </motion.div>
         )}
@@ -359,7 +371,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
             </div>
             <h3 className="text-lg font-semibold text-foreground mb-2">Reviewing Code...</h3>
             <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
-              {(aiConfig?.reviewMode ?? "deep") === "quick"
+              {reviewRunMode === "quick"
                 ? "Running a faster high-signal review. This should return sooner and use less context."
                 : "Performing a comprehensive senior-level code review. This typically takes 15–30 seconds."}
             </p>

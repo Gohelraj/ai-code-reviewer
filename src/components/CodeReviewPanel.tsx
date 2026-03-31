@@ -10,7 +10,8 @@ import toast from "react-hot-toast";
 import type { CodeReview, ReviewIssue, MRData, RequirementsCheck, MRDescriptionReview, ReviewChatMessage } from "../types";
 import { postReviewComment, postInlineComments, buildIssueMarkdown, type InlinePostResult } from "../lib/github-comment";
 import ConfirmModal from "./ConfirmModal";
-import type { AIConfig, PostingMode } from "./AISettings";
+import type { AIConfig, PostingMode, ReviewMode } from "./AISettings";
+import { ReviewModePicker } from "./ReviewModePicker";
 import { askReviewQuestion, generateIssueFix } from "../lib/api";
 import { buildMergeReadinessGates } from "../lib/review-utils";
 
@@ -21,7 +22,9 @@ interface CodeReviewPanelProps {
   mrData?: MRData | null;
   previousReview?: CodeReview | null;
   reviewLoading?: boolean;
-  onTriggerReview?: () => void;
+  onTriggerReview?: (reviewMode?: ReviewMode) => void;
+  reviewMode?: ReviewMode;
+  onReviewModeChange?: (reviewMode: ReviewMode) => void;
   onTokenChange?: (token: string) => void;
   postingMode?: PostingMode;
   selectedIssueId?: string;
@@ -658,6 +661,8 @@ export function CodeReviewPanel({
   previousReview,
   reviewLoading,
   onTriggerReview,
+  reviewMode = "deep",
+  onReviewModeChange,
   onTokenChange,
   postingMode = "inline",
   selectedIssueId,
@@ -1056,29 +1061,39 @@ export function CodeReviewPanel({
                   {posting ? "Posting..." : "Post to PR"}
                 </button>
               )}
-              <button
-                onClick={copyReview}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card"
-              >
-                {copied ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
-                {copied ? "Copied!" : "Copy as MD"}
-              </button>
-              {onTriggerReview && (
                 <button
-                  onClick={onTriggerReview}
-                  disabled={reviewLoading}
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card disabled:opacity-50"
+                  onClick={copyReview}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card"
                 >
-                  {reviewLoading ? (
-                    <span className="w-3 h-3 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
-                  ) : (
-                    <Play size={12} />
-                  )}
-                  {reviewLoading ? "Reviewing..." : "Re-run"}
+                  {copied ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
+                  {copied ? "Copied!" : "Copy as MD"}
                 </button>
-              )}
+                {onTriggerReview && (
+                  <div className="flex items-center gap-2 flex-wrap justify-end">
+                    {onReviewModeChange && (
+                      <ReviewModePicker
+                        value={reviewMode}
+                        onChange={onReviewModeChange}
+                        disabled={reviewLoading}
+                        compact
+                      />
+                    )}
+                    <button
+                      onClick={() => onTriggerReview(reviewMode)}
+                      disabled={reviewLoading}
+                      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card disabled:opacity-50"
+                    >
+                      {reviewLoading ? (
+                        <span className="w-3 h-3 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
+                      ) : (
+                        <Play size={12} />
+                      )}
+                      {reviewLoading ? "Reviewing..." : `Re-run ${reviewMode === "quick" ? "Quick" : "Deep"}`}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
 
           {/* Score */}
           <div className="flex items-center gap-5 mb-6">

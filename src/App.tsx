@@ -9,7 +9,7 @@ import type { IssueData } from "./lib/api";
 import { saveAnalysis } from "./lib/history";
 import type { HistoryEntry } from "./lib/history";
 import type { AnalysisState } from "./types";
-import type { AIConfig } from "./components/AISettings";
+import type { AIConfig, ReviewMode } from "./components/AISettings";
 import { loadRepoDefaults, sanitizeAIConfig, saveAIConfig, saveRepoDefaults } from "./components/AISettings";
 import { useDarkMode } from "./lib/useDarkMode";
 import { computeReviewDiff, getRepoKeyFromUrl, readUiStateFromLocation, writeUiStateToLocation } from "./lib/review-utils";
@@ -212,9 +212,13 @@ function App() {
     }
   }, [state.mrData, activeAIConfig, flowLoading, updateState, analysisUrl]);
 
-  const handleTriggerReview = useCallback(async () => {
+  const handleTriggerReview = useCallback(async (reviewModeOverride?: ReviewMode) => {
     if (!state.mrData || !activeAIConfig || reviewLoading) return;
     setReviewLoading(true);
+    const reviewConfig: AIConfig = {
+      ...activeAIConfig,
+      reviewMode: reviewModeOverride ?? activeAIConfig.reviewMode ?? "deep",
+    };
 
     // Stash current review as "previous" for comparison
     if (state.codeReview) {
@@ -222,8 +226,8 @@ function App() {
     }
 
     try {
-      const preparedMRData = await prepareMRDataForReview(state.mrData, activeAIConfig, analysisToken);
-      const codeReview = await analyzeCodeReview(preparedMRData, activeAIConfig, analysisToken);
+      const preparedMRData = await prepareMRDataForReview(state.mrData, reviewConfig, analysisToken);
+      const codeReview = await analyzeCodeReview(preparedMRData, reviewConfig, analysisToken);
       codeReview.reviewDiff = computeReviewDiff(state.codeReview, codeReview);
       updateState({
         mrData: preparedMRData,
@@ -237,8 +241,8 @@ function App() {
 
       // Update history with review
       setState((prev) => {
-        if (analysisUrl && activeAIConfig) {
-          saveAnalysis(analysisUrl, prev, activeAIConfig);
+        if (analysisUrl) {
+          saveAnalysis(analysisUrl, prev, reviewConfig);
         }
         return prev;
       });
@@ -249,7 +253,7 @@ function App() {
     } finally {
       setReviewLoading(false);
     }
-  }, [state.mrData, state.codeReview, state.selectedIssueId, activeAIConfig, reviewLoading, updateState, analysisToken]);
+  }, [state.mrData, state.codeReview, state.selectedIssueId, activeAIConfig, reviewLoading, updateState, analysisToken, analysisUrl]);
 
   const handleReviewChatChange = useCallback((messages: AnalysisState["reviewChat"]) => {
     updateState({ reviewChat: messages });
