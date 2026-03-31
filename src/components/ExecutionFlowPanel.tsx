@@ -75,7 +75,7 @@ function FlowGroupCard({ group, mrData, index }: { group: FlowGroup; mrData: MRD
               const isExpanded = expandedFile === file.filename;
 
               return (
-                <div key={file.filename} className="rounded-xl border border-border bg-card overflow-hidden">
+                <div key={file.filename} data-filename={file.filename} className="rounded-xl border border-border bg-card overflow-hidden">
                   {/* File header */}
                   <button
                     onClick={() => setExpandedFile(isExpanded ? null : file.filename)}

@@ -121,12 +121,15 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
             <ThemeToggle theme={theme} onThemeChange={onThemeChange} />
             <button
               onClick={() => setFileTreeOpen(!fileTreeOpen)}
-              className={`flex items-center gap-1.5 text-xs transition-colors px-2 py-1.5 rounded-lg border bg-secondary hover:bg-card flex-shrink-0 ${
-                fileTreeOpen ? "text-foreground border-foreground/30" : "text-muted-foreground hover:text-foreground border-border"
+              className={`flex items-center gap-1.5 text-xs font-medium transition-colors px-2.5 py-1.5 rounded-lg border flex-shrink-0 ${
+                fileTreeOpen
+                  ? "text-primary bg-primary/10 border-primary/30 hover:bg-primary/15"
+                  : "text-foreground bg-secondary hover:bg-card border-border"
               }`}
-              title="Toggle file tree"
+              title="Toggle file tree (Changed Files)"
             >
-              <FolderTree size={12} />
+              <FolderTree size={13} />
+              <span>{mrData.pr.changedFiles}</span>
               <span className="hidden sm:block">Files</span>
             </button>
             {(summary || codeReview) && (
@@ -334,15 +337,29 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
           open={fileTreeOpen}
           onClose={() => setFileTreeOpen(false)}
           onFileClick={(filename) => {
-            // Switch to review tab with file filter if code review exists
-            if (codeReview) {
+            // Try to find the file on the current tab first
+            const tryScroll = () => {
+              const el = document.querySelector(`[data-filename="${CSS.escape(filename)}"]`);
+              if (el) {
+                el.scrollIntoView({ behavior: "smooth", block: "center" });
+                // Briefly highlight the element
+                el.classList.add("ring-2", "ring-primary/50");
+                setTimeout(() => el.classList.remove("ring-2", "ring-primary/50"), 2000);
+                return true;
+              }
+              return false;
+            };
+
+            // If already visible on current tab, just scroll
+            if (tryScroll()) return;
+
+            // Switch to summary tab (always has diffs) or review tab if review exists
+            if (summary) {
+              onTabChange("summary");
+            } else if (codeReview) {
               onTabChange("review");
             }
-            // Scroll to first matching element (best-effort)
-            setTimeout(() => {
-              const el = document.querySelector(`[title="${filename}"]`);
-              el?.scrollIntoView({ behavior: "smooth", block: "center" });
-            }, 100);
+            setTimeout(() => tryScroll(), 150);
           }}
         />
         <main className="flex-1 min-w-0 max-w-5xl mx-auto px-4 sm:px-6 py-6">

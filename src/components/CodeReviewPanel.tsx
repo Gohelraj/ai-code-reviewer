@@ -1,13 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   Shield, Zap, CheckCircle2, XCircle, AlertTriangle, MessageSquare,
   ChevronDown, ChevronUp, Copy, Check, Star, BookOpen, Lock, Gauge, Send, FileCode, MapPin,
-  Square, CheckSquare, ListChecks, EyeOff, Eye, ClipboardCopy, Play, RefreshCw, Key
+  Square, CheckSquare, ListChecks, EyeOff, Eye, ClipboardCopy, Play, RefreshCw, Key, Pencil
 } from "lucide-react";
 import toast from "react-hot-toast";
 import type { CodeReview, ReviewIssue, MRData } from "../types";
-import { postReviewComment, postInlineComments, type InlinePostResult } from "../lib/github-comment";
+import { postReviewComment, postInlineComments, buildIssueMarkdown, type InlinePostResult } from "../lib/github-comment";
 import ConfirmModal from "./ConfirmModal";
 
 interface CodeReviewPanelProps {
@@ -134,7 +134,7 @@ function buildSingleIssueMarkdown(issue: ReviewIssue): string {
   return lines.join("\n");
 }
 
-function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismiss, onRestore }: {
+function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismiss, onRestore, posted, editedComment, onEditComment, onResetComment }: {
   issue: ReviewIssue;
   index: number;
   selected?: boolean;
@@ -142,9 +142,21 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
   dismissed?: boolean;
   onDismiss?: () => void;
   onRestore?: () => void;
+  posted?: boolean;
+  editedComment?: string;
+  onEditComment?: (markdown: string) => void;
+  onResetComment?: () => void;
 }) {
   const [expanded, setExpanded] = useState(issue.severity === "critical" && !dismissed);
   const [issueCopied, setIssueCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState("");
+  const isEdited = editedComment !== undefined;
+
+  // Extract title from edited markdown (first heading line: "#### emoji [SEV] Title")
+  const displayTitle = isEdited
+    ? (editedComment.match(/^#{1,4}\s+(?:[🔴🟡🔵]\s*)?(?:\[\w+\]\s*)?(.+)$/m)?.[1]?.trim() ?? issue.title)
+    : issue.title;
   const config = SEVERITY_CONFIG[issue.severity] ?? DEFAULT_SEVERITY;
   const Icon = config.icon;
   const showCheckbox = onToggleSelect !== undefined && !dismissed;
@@ -154,6 +166,7 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04, duration: 0.3 }}
+      data-filename={issue.file}
       className={`border rounded-2xl overflow-hidden ${config.border} bg-card ${issue.severity === "critical" && !dismissed ? "border-l-4 border-l-destructive" : ""} ${selected ? "ring-2 ring-primary/30" : ""} ${dismissed ? "opacity-50" : ""}`}
     >
       <div className="flex items-start">
@@ -188,8 +201,20 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
                 Dismissed
               </span>
             )}
+            {posted && !dismissed && (
+              <span className="text-xs font-medium text-accent px-2 py-0.5 rounded-md bg-accent/10 border border-accent/20 flex items-center gap-1">
+                <Check size={10} />
+                Posted
+              </span>
+            )}
+            {isEdited && !dismissed && (
+              <span className="text-xs font-medium text-amber-500 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 flex items-center gap-1">
+                <Pencil size={10} />
+                Edited
+              </span>
+            )}
           </div>
-          <p className="text-sm font-semibold text-foreground leading-snug">{issue.title}</p>
+          <p className="text-sm font-semibold text-foreground leading-snug">{displayTitle}</p>
           {(issue.file || issue.lineHint) && (
             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
               {issue.file && (
@@ -228,23 +253,111 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
               )}
             </div>
           )}
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Issue</p>
-            <p className="text-sm text-foreground leading-relaxed">{issue.description}</p>
-          </div>
-
-          {issue.currentCode && (
-            <CodeBlock code={issue.currentCode} label="Problematic Code" variant="destructive" />
+          {/* Edited comment preview */}
+          {isEdited && !editing && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wider text-amber-500 flex items-center gap-1.5">
+                  <Pencil size={10} />
+                  Edited Comment Preview
+                </p>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onResetComment?.();
+                    toast.success("Comment reset to original");
+                  }}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <RefreshCw size={10} />
+                  Reset to original
+                </button>
+              </div>
+              <div className="relative rounded-xl border border-amber-500/20 bg-amber-500/5 overflow-hidden">
+                <pre className="text-xs font-mono p-4 overflow-x-auto whitespace-pre-wrap break-words leading-relaxed text-foreground">{editedComment}</pre>
+              </div>
+            </div>
           )}
 
-          {issue.suggestedFix && (
-            <CodeBlock code={issue.suggestedFix} label="Suggested Fix" variant="accent" />
+          {/* Original structured content (hidden when edited, unless editing) */}
+          {(!isEdited || editing) && (
+            <>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Issue</p>
+                <p className="text-sm text-foreground leading-relaxed">{issue.description}</p>
+              </div>
+
+              {issue.currentCode && (
+                <CodeBlock code={issue.currentCode} label="Problematic Code" variant="destructive" />
+              )}
+
+              {issue.suggestedFix && (
+                <CodeBlock code={issue.suggestedFix} label="Suggested Fix" variant="accent" />
+              )}
+
+              {issue.impact && (
+                <div className="bg-muted/50 rounded-xl px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Impact</p>
+                  <p className="text-sm text-foreground leading-relaxed">{issue.impact}</p>
+                </div>
+              )}
+            </>
           )}
 
-          {issue.impact && (
-            <div className="bg-muted/50 rounded-xl px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Impact</p>
-              <p className="text-sm text-foreground leading-relaxed">{issue.impact}</p>
+          {/* Inline comment editor */}
+          {editing && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Edit Comment Markdown</p>
+                {isEdited && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onResetComment?.();
+                      setEditValue(buildSingleIssueMarkdown(issue));
+                    }}
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <RefreshCw size={10} />
+                    Reset
+                  </button>
+                )}
+              </div>
+              <textarea
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                className="w-full min-h-[140px] text-xs font-mono bg-background border border-border rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all text-foreground resize-y leading-relaxed"
+                spellCheck={false}
+                onClick={(e) => e.stopPropagation()}
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const original = buildSingleIssueMarkdown(issue);
+                    if (editValue.trim() !== original.trim()) {
+                      onEditComment?.(editValue);
+                      toast.success("Comment edited");
+                    } else {
+                      onResetComment?.();
+                    }
+                    setEditing(false);
+                  }}
+                  className="flex items-center gap-1 text-xs font-medium text-background bg-primary hover:bg-primary/90 px-3 py-1.5 rounded-lg transition-all active:scale-95"
+                >
+                  <Check size={11} />
+                  Save
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditing(false);
+                  }}
+                  className="text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg border border-border transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           )}
 
@@ -264,6 +377,27 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
               {issueCopied ? <Check size={11} className="text-accent" /> : <ClipboardCopy size={11} />}
               {issueCopied ? "Copied!" : "Copy as MD"}
             </button>
+            {onEditComment && !dismissed && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!editing) {
+                    setEditValue(editedComment ?? buildSingleIssueMarkdown(issue));
+                    setEditing(true);
+                  } else {
+                    setEditing(false);
+                  }
+                }}
+                className={`flex items-center gap-1 text-xs transition-colors px-2 py-1 rounded-md ${
+                  isEdited
+                    ? "text-amber-500 hover:text-amber-600 hover:bg-amber-500/10"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                }`}
+              >
+                <Pencil size={11} />
+                {editing ? "Close Editor" : isEdited ? "Edit (modified)" : "Edit Comment"}
+              </button>
+            )}
             {dismissed && onRestore && (
               <button
                 onClick={(e) => { e.stopPropagation(); onRestore(); }}
@@ -289,6 +423,132 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
   );
 }
 
+function EditBeforePostModal({
+  issues,
+  initialBodies,
+  platform,
+  onPost,
+  onCancel,
+  posting,
+}: {
+  issues: ReviewIssue[];
+  initialBodies: Record<string, string>;
+  platform: string;
+  onPost: (editedBodies: Record<string, string>) => void;
+  onCancel: () => void;
+  posting: boolean;
+}) {
+  const [bodies, setBodies] = useState<Record<string, string>>(initialBodies);
+  const [expandedId, setExpandedId] = useState<string | null>(issues.length === 1 ? issues[0].id : null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !posting) onCancel(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel, posting]);
+
+  const updateBody = (id: string, value: string) => {
+    setBodies(prev => ({ ...prev, [id]: value }));
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={(e) => { if (e.target === e.currentTarget && !posting) onCancel(); }}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.2 }}
+        className="bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl"
+      >
+        <div className="px-6 py-4 border-b border-border">
+          <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
+            <Pencil size={16} />
+            Review &amp; Edit Comments
+          </h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            Review and optionally edit {issues.length} comment{issues.length !== 1 ? "s" : ""} before posting to {platform}
+          </p>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {issues.map((issue) => {
+            const config = SEVERITY_CONFIG[issue.severity] ?? DEFAULT_SEVERITY;
+            const isExpanded = expandedId === issue.id;
+            const isEdited = bodies[issue.id] !== initialBodies[issue.id];
+
+            return (
+              <div key={issue.id} className={`border rounded-xl overflow-hidden ${config.border}`}>
+                <button
+                  onClick={() => setExpandedId(isExpanded ? null : issue.id)}
+                  className="w-full flex items-center gap-2 px-4 py-3 hover:bg-secondary/30 transition-colors text-left"
+                >
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-md flex-shrink-0 ${config.badge}`}>
+                    {issue.severity.toUpperCase()}
+                  </span>
+                  <span className="text-sm font-medium text-foreground flex-1 truncate">{issue.title}</span>
+                  {isEdited && (
+                    <span className="text-xs text-amber-500 font-medium flex-shrink-0">edited</span>
+                  )}
+                  {isExpanded ? <ChevronUp size={14} className="text-muted-foreground flex-shrink-0" /> : <ChevronDown size={14} className="text-muted-foreground flex-shrink-0" />}
+                </button>
+                {isExpanded && (
+                  <div className="px-4 pb-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-muted-foreground">
+                        {issue.file && <span className="font-mono">{issue.file}</span>}
+                        {issue.lineHint && <span> &middot; {issue.lineHint}</span>}
+                      </p>
+                      {isEdited && (
+                        <button
+                          onClick={() => setBodies(prev => ({ ...prev, [issue.id]: initialBodies[issue.id] }))}
+                          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          <RefreshCw size={10} />
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                    <textarea
+                      value={bodies[issue.id] || ""}
+                      onChange={(e) => updateBody(issue.id, e.target.value)}
+                      className="w-full min-h-[160px] text-xs font-mono bg-background border border-border rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all text-foreground resize-y leading-relaxed"
+                      spellCheck={false}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="px-6 py-4 border-t border-border flex items-center justify-between">
+          <button
+            onClick={onCancel}
+            disabled={posting}
+            className="text-xs text-muted-foreground hover:text-foreground px-4 py-2 rounded-lg border border-border transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onPost(bodies)}
+            disabled={posting}
+            className="flex items-center gap-1.5 text-xs font-semibold text-background bg-primary hover:bg-primary/90 px-5 py-2 rounded-xl transition-all active:scale-95 disabled:opacity-50"
+          >
+            {posting ? (
+              <span className="w-3 h-3 border-2 border-background/30 border-t-background rounded-full animate-spin" />
+            ) : (
+              <Send size={13} />
+            )}
+            {posting ? "Posting..." : `Post ${issues.length} Comment${issues.length !== 1 ? "s" : ""}`}
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview, reviewLoading, onTriggerReview, onTokenChange }: CodeReviewPanelProps) {
   const [copied, setCopied] = useState(false);
   const [posting, setPosting] = useState(false);
@@ -298,6 +558,9 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
   const effectiveToken = prToken || localToken || "";
   const hasToken = !!effectiveToken;
   const canPost = !!prUrl && hasToken;
+  const [postedIssues, setPostedIssues] = useState<Set<string>>(new Set());
+  const [editedComments, setEditedComments] = useState<Record<string, string>>({});
+  const [editModal, setEditModal] = useState<{ issues: ReviewIssue[]; bodies: Record<string, string> } | null>(null);
   const [dismissedIssues, setDismissedIssues] = useState<Set<string>>(new Set());
   const [showDismissed, setShowDismissed] = useState(false);
   const [confirmModal, setConfirmModal] = useState<{ title: string; message: string; confirmLabel: string; onConfirm: () => void } | null>(null);
@@ -490,7 +753,7 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
 
   const dismissedCount = dismissedIssues.size;
 
-  const doPostSelected = async () => {
+  const doPostSelected = async (editedBodies?: Record<string, string>) => {
     if (!prUrl || !effectiveToken || selectedCount === 0) return;
     const selectedList = review.issues.filter((i) => selectedIssues.has(i.id));
     setPostingSelected(true);
@@ -500,7 +763,16 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
         token: effectiveToken,
         issues: selectedList,
         diffRefs: mrData?.diffRefs,
+        overrideBodies: editedBodies,
       });
+
+      if (result.postedIds.length > 0) {
+        setPostedIssues((prev) => {
+          const next = new Set(prev);
+          result.postedIds.forEach((id) => next.add(id));
+          return next;
+        });
+      }
 
       const parts: string[] = [];
       if (result.inline > 0) parts.push(`${result.inline} inline`);
@@ -522,17 +794,12 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
 
   const handlePostSelected = () => {
     if (!prUrl || !effectiveToken || selectedCount === 0) return;
-    const count = review.issues.filter((i) => selectedIssues.has(i.id)).length;
-    const platform = mrData?.platform === "gitlab" ? "MR" : "PR";
-    setConfirmModal({
-      title: `Post ${count} Comment${count !== 1 ? "s" : ""} to ${platform}`,
-      message: `This will post ${count} issue${count !== 1 ? "s" : ""} as inline comments on the ${platform}. This action cannot be undone.`,
-      confirmLabel: `Post ${count} Comment${count !== 1 ? "s" : ""}`,
-      onConfirm: () => {
-        setConfirmModal(null);
-        doPostSelected();
-      },
-    });
+    const selectedList = review.issues.filter((i) => selectedIssues.has(i.id));
+    const bodies: Record<string, string> = {};
+    for (const issue of selectedList) {
+      bodies[issue.id] = editedComments[issue.id] ?? buildIssueMarkdown(issue);
+    }
+    setEditModal({ issues: selectedList, bodies });
   };
 
   return (
@@ -779,6 +1046,10 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
                   dismissed={dismissedIssues.has(issue.id)}
                   onDismiss={() => dismissIssue(issue.id)}
                   onRestore={() => restoreIssue(issue.id)}
+                  posted={postedIssues.has(issue.id)}
+                  editedComment={editedComments[issue.id]}
+                  onEditComment={prUrl ? (md) => setEditedComments((prev) => ({ ...prev, [issue.id]: md })) : undefined}
+                  onResetComment={() => setEditedComments((prev) => { const next = { ...prev }; delete next[issue.id]; return next; })}
                 />
               ))}
             </div>
@@ -807,6 +1078,10 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
                         dismissed={dismissedIssues.has(issue.id)}
                         onDismiss={() => dismissIssue(issue.id)}
                         onRestore={() => restoreIssue(issue.id)}
+                        posted={postedIssues.has(issue.id)}
+                        editedComment={editedComments[issue.id]}
+                        onEditComment={prUrl ? (md) => setEditedComments((prev) => ({ ...prev, [issue.id]: md })) : undefined}
+                        onResetComment={() => setEditedComments((prev) => { const next = { ...prev }; delete next[issue.id]; return next; })}
                       />
                     ))}
                   </div>
@@ -998,6 +1273,19 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
         </div>
       </div>
 
+      {editModal && (
+        <EditBeforePostModal
+          issues={editModal.issues}
+          initialBodies={editModal.bodies}
+          platform={mrData?.platform === "gitlab" ? "MR" : "PR"}
+          onPost={(editedBodies) => {
+            setEditModal(null);
+            doPostSelected(editedBodies);
+          }}
+          onCancel={() => setEditModal(null)}
+          posting={postingSelected}
+        />
+      )}
       <ConfirmModal
         open={!!confirmModal}
         title={confirmModal?.title ?? ""}

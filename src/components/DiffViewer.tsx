@@ -393,7 +393,7 @@ export function DiffViewer({ file, defaultOpen = false }: DiffViewerProps) {
   const lines = useMemo(() => file.patch ? parsePatch(file.patch) : [], [file.patch]);
 
   return (
-    <div className="border border-border rounded-xl overflow-hidden bg-card">
+    <div className="border border-border rounded-xl overflow-hidden bg-card" data-filename={file.filename}>
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/50 transition-colors text-left"

@@ -12,6 +12,7 @@ export interface InlinePostResult {
   general: number;
   failed: number;
   errors: string[];
+  postedIds: string[];
 }
 
 function parseGitHubUrl(url: string): { owner: string; repo: string; number: string } | null {
@@ -41,7 +42,7 @@ function parseLineNumber(lineHint: string): number | null {
 }
 
 /** Build markdown body for a single issue */
-function buildIssueMarkdown(issue: ReviewIssue): string {
+export function buildIssueMarkdown(issue: ReviewIssue): string {
   const sevEmoji = issue.severity === "critical" ? "🔴" : issue.severity === "warning" ? "🟡" : "🔵";
   const lines: string[] = [];
 
@@ -132,19 +133,21 @@ export async function postInlineComments({
   token,
   issues,
   diffRefs,
+  overrideBodies,
 }: {
   url: string;
   token: string;
   issues: ReviewIssue[];
   diffRefs?: DiffRefs;
+  overrideBodies?: Record<string, string>;
 }): Promise<InlinePostResult> {
-  const result: InlinePostResult = { total: issues.length, inline: 0, general: 0, failed: 0, errors: [] };
+  const result: InlinePostResult = { total: issues.length, inline: 0, general: 0, failed: 0, errors: [], postedIds: [] };
 
   const gitlab = parseGitLabUrl(url);
   const github = parseGitHubUrl(url);
 
   for (const issue of issues) {
-    const body = buildIssueMarkdown(issue);
+    const body = overrideBodies?.[issue.id] ?? buildIssueMarkdown(issue);
     const lineNum = issue.lineHint ? parseLineNumber(issue.lineHint) : null;
     const hasPosition = !!issue.file && lineNum !== null;
 
@@ -179,6 +182,7 @@ export async function postInlineComments({
 
           if (res.ok) {
             result.inline++;
+            result.postedIds.push(issue.id);
             continue;
           }
 
@@ -206,6 +210,7 @@ export async function postInlineComments({
 
         if (res.ok) {
           result.general++;
+          result.postedIds.push(issue.id);
         } else {
           const text = await res.text();
           result.failed++;
@@ -235,6 +240,7 @@ export async function postInlineComments({
 
           if (res.ok) {
             result.inline++;
+            result.postedIds.push(issue.id);
             continue;
           }
 
@@ -263,6 +269,7 @@ export async function postInlineComments({
 
         if (res.ok) {
           result.general++;
+          result.postedIds.push(issue.id);
         } else {
           const text = await res.text();
           result.failed++;
