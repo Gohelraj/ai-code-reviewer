@@ -1,8 +1,11 @@
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import { motion } from "framer-motion";
-import { ArrowDown, ChevronDown, ChevronUp, ExternalLink, GitCommitHorizontal, Network } from "lucide-react";
+import { ArrowDown, ChevronDown, ChevronUp, ExternalLink, GitCommitHorizontal, Network, Copy, Check, LayoutList, Workflow } from "lucide-react";
 import type { ExecutionFlow, FlowGroup, MRData } from "../types";
 import { DiffViewer } from "./DiffViewer";
+import toast from "react-hot-toast";
+
+const FlowDiagram = lazy(() => import("./FlowDiagram").then((m) => ({ default: m.FlowDiagram })));
 
 interface ExecutionFlowPanelProps {
   flow: ExecutionFlow;
@@ -129,6 +132,37 @@ function FlowGroupCard({ group, mrData, index }: { group: FlowGroup; mrData: MRD
 
 export function ExecutionFlowPanel({ flow, mrData }: ExecutionFlowPanelProps) {
   const sortedGroups = [...flow.flowGroups].sort((a, b) => a.order - b.order);
+  const [copied, setCopied] = useState(false);
+  const [view, setView] = useState<"list" | "diagram">("list");
+
+  const copyFlow = () => {
+    const text = [
+      `# Execution Flow`,
+      ``,
+      `## Overview`,
+      flow.flowDescription,
+      ``,
+      `**Entry Point:** ${flow.entryPoint}`,
+      `**Data Flow:** ${flow.dataFlow}`,
+      ``,
+      `## Layers`,
+      `${sortedGroups.map((g) => g.layer).join(" \u2192 ")}`,
+      ``,
+      ...sortedGroups.map((g) => [
+        `### Layer ${g.order}: ${g.layer}`,
+        g.layerDescription,
+        ``,
+        ...g.files.map((f) =>
+          `- **${f.filename}** \u2014 ${f.role}\n  ${f.keyChanges}${f.callsInto?.length ? `\n  Calls: ${f.callsInto.join(", ")}` : ""}`
+        ),
+        ``,
+      ]).flat(),
+    ].join("\n");
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    toast.success("Flow copied to clipboard");
+    setTimeout(() => setCopied(false), 2500);
+  };
 
   return (
     <motion.div
@@ -138,21 +172,59 @@ export function ExecutionFlowPanel({ flow, mrData }: ExecutionFlowPanelProps) {
       className="space-y-6"
     >
       {/* Overview */}
-      <div className="bg-card border border-border rounded-2xl p-6">
+      <div className="bg-card border border-border rounded-2xl p-6 relative">
         <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
           <Network size={15} />
           Execution Flow Overview
         </h3>
+        <div className="absolute top-6 right-6 flex items-center gap-2">
+          <button
+            onClick={copyFlow}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card"
+          >
+            {copied ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
+            {copied ? "Copied!" : "Copy"}
+          </button>
+          <div className="flex items-center rounded-lg border border-border overflow-hidden">
+            <button
+              onClick={() => setView("list")}
+              className={`flex items-center gap-1 text-xs px-2.5 py-1.5 transition-colors ${view === "list" ? "bg-foreground text-background" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
+            >
+              <LayoutList size={12} />
+              <span className="hidden sm:inline">List</span>
+            </button>
+            <button
+              onClick={() => setView("diagram")}
+              className={`flex items-center gap-1 text-xs px-2.5 py-1.5 transition-colors ${view === "diagram" ? "bg-foreground text-background" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
+            >
+              <Workflow size={12} />
+              <span className="hidden sm:inline">Diagram</span>
+            </button>
+          </div>
+        </div>
         <p className="text-sm text-muted-foreground leading-relaxed mb-4">{flow.flowDescription}</p>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="rounded-xl border border-border bg-secondary/40 p-3">
+          <div className="rounded-xl border border-border bg-secondary/40 p-3 overflow-hidden">
             <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Entry Point</p>
-            <p className="text-sm font-mono font-medium text-foreground">{flow.entryPoint}</p>
+            <p className="text-sm font-mono font-medium text-foreground break-all">{flow.entryPoint}</p>
           </div>
-          <div className="rounded-xl border border-border bg-secondary/40 p-3">
+          <div className="rounded-xl border border-border bg-secondary/40 p-3 overflow-hidden">
             <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Data Flow</p>
-            <p className="text-sm text-foreground leading-relaxed">{flow.dataFlow}</p>
+            <div className="text-sm text-foreground leading-relaxed">
+              {flow.dataFlow.includes('→') || flow.dataFlow.includes('->') ? (
+                <ul className="space-y-1">
+                  {flow.dataFlow.split(/→|->/).map((segment, i, arr) => (
+                    <li key={i} className="flex items-start gap-1.5">
+                      {i < arr.length - 1 && <span className="text-muted-foreground flex-shrink-0">→</span>}
+                      <span className="break-words">{segment.trim()}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="break-words">{flow.dataFlow}</p>
+              )}
+            </div>
           </div>
         </div>
 
@@ -174,7 +246,20 @@ export function ExecutionFlowPanel({ flow, mrData }: ExecutionFlowPanelProps) {
         </div>
       </div>
 
-      {/* Flow groups */}
+      {/* Flow content */}
+      {view === "diagram" ? (
+        <Suspense fallback={
+          <div className="h-[500px] rounded-2xl border border-border flex items-center justify-center bg-card">
+            <div className="flex items-center gap-3 text-muted-foreground">
+              <span className="w-5 h-5 border-2 border-muted-foreground/30 border-t-muted-foreground rounded-full animate-spin" />
+              <span className="text-sm">Loading diagram...</span>
+            </div>
+          </div>
+        }>
+          <FlowDiagram flow={flow} />
+        </Suspense>
+      ) : (
+      /* Flow groups */
       <div className="space-y-3">
         {sortedGroups.map((group, i) => (
           <div key={group.layer} className="relative">
@@ -187,6 +272,7 @@ export function ExecutionFlowPanel({ flow, mrData }: ExecutionFlowPanelProps) {
           </div>
         ))}
       </div>
+      )}
     </motion.div>
   );
 }

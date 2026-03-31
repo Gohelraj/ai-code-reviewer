@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Cpu, ChevronDown, ChevronUp, Eye, EyeOff, ExternalLink, Check } from "lucide-react";
+import toast from "react-hot-toast";
 
 export interface AIConfig {
   provider: "openrouter";
@@ -9,28 +10,35 @@ export interface AIConfig {
 }
 
 export const OPENROUTER_MODELS = [
-  { id: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5", group: "Anthropic", recommended: true },
+  { id: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6", group: "Anthropic", recommended: true },
+  { id: "anthropic/claude-opus-4-6", label: "Claude Opus 4.6", group: "Anthropic" },
+  { id: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5", group: "Anthropic" },
   { id: "anthropic/claude-opus-4-5", label: "Claude Opus 4.5", group: "Anthropic" },
   { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet", group: "Anthropic" },
-  { id: "openai/gpt-4.1", label: "GPT-4.1", group: "OpenAI", recommended: true },
+  { id: "openai/gpt-5.3", label: "GPT-5.3", group: "OpenAI", recommended: true },
+  { id: "openai/gpt-5.3-mini", label: "GPT-5.3 Mini", group: "OpenAI" },
+  { id: "openai/gpt-4.1", label: "GPT-4.1", group: "OpenAI" },
   { id: "openai/gpt-4o", label: "GPT-4o", group: "OpenAI" },
   { id: "openai/gpt-4o-mini", label: "GPT-4o Mini", group: "OpenAI" },
   { id: "openai/o3", label: "o3", group: "OpenAI" },
-  { id: "google/gemini-2.5-pro-preview-03-25", label: "Gemini 2.5 Pro", group: "Google", recommended: true },
-  { id: "google/gemini-2.5-flash-preview", label: "Gemini 2.5 Flash", group: "Google" },
+  { id: "openai/o4-mini", label: "o4-mini", group: "OpenAI" },
+  { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro", group: "Google", recommended: true },
+  { id: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash", group: "Google" },
   { id: "google/gemini-2.0-flash-001", label: "Gemini 2.0 Flash", group: "Google" },
   { id: "deepseek/deepseek-chat-v3-0324", label: "DeepSeek V3", group: "DeepSeek" },
   { id: "deepseek/deepseek-r1", label: "DeepSeek R1", group: "DeepSeek" },
+  { id: "meta-llama/llama-4-maverick", label: "Llama 4 Maverick", group: "Meta" },
+  { id: "meta-llama/llama-4-scout", label: "Llama 4 Scout", group: "Meta" },
   { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B", group: "Meta" },
   { id: "mistralai/mistral-large-2411", label: "Mistral Large", group: "Mistral" },
   { id: "qwen/qwen3-235b-a22b", label: "Qwen3 235B", group: "Qwen" },
-  { id: "x-ai/grok-3-beta", label: "Grok 3 Beta", group: "xAI" },
+  { id: "x-ai/grok-3", label: "Grok 3", group: "xAI" },
 ];
 
 const DEFAULT_CONFIG: AIConfig = {
   provider: "openrouter",
   apiKey: "",
-  model: "anthropic/claude-sonnet-4-5",
+  model: "anthropic/claude-sonnet-4-6",
 };
 
 // Persist to localStorage
@@ -64,7 +72,7 @@ const MODEL_GROUPS = OPENROUTER_MODELS.reduce<Record<string, typeof OPENROUTER_M
 }, {});
 
 export function AISettings({ config, onChange, disabled }: AISettingsProps) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(!config.apiKey);
   const [showKey, setShowKey] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -73,6 +81,7 @@ export function AISettings({ config, onChange, disabled }: AISettingsProps) {
 
   const handleSave = () => {
     saveAIConfig(config);
+    toast.success("AI settings saved to browser");
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };

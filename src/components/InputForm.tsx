@@ -1,9 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { GitPullRequest, Key, ChevronDown, ChevronUp, Sparkles, GitBranch, ArrowRight, Shield } from "lucide-react";
+import { GitPullRequest, Key, ChevronDown, ChevronUp, Sparkles, GitBranch, ArrowRight, Shield, FileText, Search, Layers, Clock, Trash2 } from "lucide-react";
 import { AISettings, loadAIConfig } from "./AISettings";
 import type { AIConfig } from "./AISettings";
 import { ThemeToggle } from "./ThemeToggle";
+import { getHistory, deleteAnalysis } from "../lib/history";
+import type { HistoryEntry } from "../lib/history";
+import { formatDistanceToNow } from "date-fns";
 
 export interface SubmitPayload {
   url: string;
@@ -16,6 +19,7 @@ interface InputFormProps {
   isLoading: boolean;
   theme: "light" | "dark" | "system";
   onThemeChange: (theme: "light" | "dark" | "system") => void;
+  onLoadHistory?: (entry: HistoryEntry) => void;
 }
 
 const EXAMPLE_URLS = [
@@ -24,11 +28,16 @@ const EXAMPLE_URLS = [
   "https://gitlab.com/gitlab-org/gitlab/-/merge_requests/12345",
 ];
 
-export function InputForm({ onSubmit, isLoading, theme, onThemeChange }: InputFormProps) {
+export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHistory }: InputFormProps) {
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [aiConfig, setAiConfig] = useState<AIConfig>(loadAIConfig);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+
+  useEffect(() => {
+    getHistory().then((entries) => setHistory(entries.slice(0, 5)));
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,15 +58,17 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange }: InputFo
           <span className="font-semibold text-foreground tracking-tight text-lg">MergeAI Reviewer</span>
           <div className="ml-auto flex items-center gap-2">
             <ThemeToggle theme={theme} onThemeChange={onThemeChange} />
-            <span className="text-xs text-muted-foreground bg-muted px-2.5 py-1 rounded-full font-medium">
-              Powered by AI
-            </span>
           </div>
         </div>
       </header>
 
       {/* Hero */}
-      <main className="flex-1 flex flex-col items-center justify-center px-6 py-16">
+      <main className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 py-12 sm:py-16 relative overflow-hidden">
+        {/* Background gradient */}
+        <div className="absolute inset-0 -z-10 overflow-hidden">
+          <div className="absolute top-[-20%] left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full bg-accent/5 blur-3xl" />
+          <div className="absolute bottom-[-10%] right-[-10%] w-[400px] h-[400px] rounded-full bg-purple-500/5 blur-3xl" />
+        </div>
         <motion.div
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
@@ -72,7 +83,7 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange }: InputFo
             </div>
           </div>
 
-          <h1 className="text-4xl sm:text-5xl font-bold text-center text-foreground mb-4 leading-tight tracking-tight">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-center text-foreground mb-4 leading-tight tracking-tight">
             Review merge requests
             <br />
             <span style={{ color: "hsl(142 71% 45%)" }}>10× faster</span> with AI
@@ -196,6 +207,63 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange }: InputFo
           </div>
         </motion.div>
 
+        {/* Recent analyses */}
+        {history.length > 0 && onLoadHistory && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25, duration: 0.45 }}
+            className="mt-12 w-full max-w-2xl"
+          >
+            <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+              <Clock size={14} className="text-muted-foreground" />
+              Recent Reviews
+            </h3>
+            <div className="space-y-2">
+              {history.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3 hover:border-foreground/20 transition-all group"
+                >
+                  <button
+                    onClick={() => onLoadHistory(entry)}
+                    className="flex-1 text-left min-w-0"
+                    disabled={isLoading}
+                  >
+                    <p className="text-sm font-medium text-foreground truncate">{entry.prTitle}</p>
+                    <p className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
+                      <span className={entry.url.includes("github") ? "text-foreground" : "text-orange-500"}>
+                        {entry.url.includes("github") ? "GitHub" : "GitLab"}
+                      </span>
+                      <span>·</span>
+                      <span>{entry.model}</span>
+                      <span>·</span>
+                      <span>{formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}</span>
+                      {entry.state.codeReview && (
+                        <>
+                          <span>·</span>
+                          <span className="font-medium">{entry.state.codeReview.overallScore}/10</span>
+                        </>
+                      )}
+                    </p>
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      await deleteAnalysis(entry.id);
+                      setHistory((h) => h.filter((x) => x.id !== entry.id));
+                    }}
+                    className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all"
+                    title="Delete"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+
         {/* Feature grid */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -205,30 +273,38 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange }: InputFo
         >
           {[
             {
-              icon: "📋",
+              icon: FileText,
+              color: "bg-accent/10 text-accent",
               title: "Change Summary",
               desc: "Understand what changed and why, with file-by-file breakdown and impact levels."
             },
             {
-              icon: "🔄",
+              icon: Layers,
+              color: "bg-blue-500/10 text-blue-500",
               title: "Execution Flow",
               desc: "See changes ordered by how data flows: Route → Controller → Service → DAL."
             },
             {
-              icon: "🔍",
+              icon: Search,
+              color: "bg-purple-500/10 text-purple-500",
               title: "Senior Review",
               desc: "Critical issues, security concerns, and improvement suggestions from an AI senior engineer."
             }
-          ].map((feature) => (
-            <div
-              key={feature.title}
-              className="bg-card border border-border rounded-xl p-4 text-center"
-            >
-              <div className="text-2xl mb-2">{feature.icon}</div>
-              <h3 className="text-sm font-semibold text-foreground mb-1">{feature.title}</h3>
-              <p className="text-xs text-muted-foreground leading-relaxed">{feature.desc}</p>
-            </div>
-          ))}
+          ].map((feature) => {
+            const Icon = feature.icon;
+            return (
+              <div
+                key={feature.title}
+                className="bg-card border border-border rounded-xl p-5 text-center hover:border-foreground/20 hover:shadow-md transition-all group"
+              >
+                <div className={`w-10 h-10 rounded-xl ${feature.color} flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform`}>
+                  <Icon size={20} />
+                </div>
+                <h3 className="text-sm font-semibold text-foreground mb-1">{feature.title}</h3>
+                <p className="text-xs text-muted-foreground leading-relaxed">{feature.desc}</p>
+              </div>
+            );
+          })}
         </motion.div>
       </main>
     </div>

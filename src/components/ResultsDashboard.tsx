@@ -1,12 +1,16 @@
+import { useEffect } from "react";
 import { motion } from "framer-motion";
-import { GitPullRequest, FileText, GitBranch, Search, ArrowLeft, ExternalLink, Cpu, Play } from "lucide-react";
+import { GitPullRequest, FileText, GitBranch, Search, ArrowLeft, ExternalLink, Cpu, Play, Plus, Minus, Download, Printer } from "lucide-react";
 import type { AnalysisState } from "../types";
 import { ChangeSummaryPanel } from "./ChangeSummaryPanel";
 import { ExecutionFlowPanel } from "./ExecutionFlowPanel";
 import { CodeReviewPanel } from "./CodeReviewPanel";
+import { SummarySkeleton, FlowSkeleton } from "./Skeleton";
 import type { AIConfig } from "./AISettings";
 import { OPENROUTER_MODELS } from "./AISettings";
 import { ThemeToggle } from "./ThemeToggle";
+import { exportAsMarkdown, downloadMarkdown } from "../lib/export";
+import { estimateCost, formatCost } from "../lib/cost";
 
 interface ResultsDashboardProps {
   state: AnalysisState;
@@ -17,6 +21,8 @@ interface ResultsDashboardProps {
   onThemeChange: (theme: "light" | "dark" | "system") => void;
   reviewLoading: boolean;
   onTriggerReview: () => void;
+  prUrl?: string;
+  prToken?: string;
 }
 
 const TABS = [
@@ -25,7 +31,7 @@ const TABS = [
   { id: "review" as const, label: "Code Review", icon: Search, description: "Senior engineer insights" },
 ];
 
-export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, onTriggerReview }: ResultsDashboardProps) {
+export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, onTriggerReview, prUrl, prToken }: ResultsDashboardProps) {
   const { mrData, summary, executionFlow, codeReview, activeTab } = state;
   const modelLabel = aiConfig?.provider === "openrouter" && aiConfig.apiKey
     ? OPENROUTER_MODELS.find((m) => m.id === aiConfig.model)?.label ?? aiConfig.model
@@ -33,8 +39,43 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
 
   if (!mrData) return null;
 
+  const diffText = mrData.files.map((f) => f.patch ?? "").join("\n");
+  const cost = aiConfig?.model ? estimateCost(diffText, aiConfig.model) : null;
+
   const issueCount = codeReview?.issues.length ?? 0;
   const criticalCount = codeReview?.issues.filter((i) => i.severity === "critical").length ?? 0;
+  const warningCount = codeReview?.issues.filter((i) => i.severity === "warning").length ?? 0;
+  const isAnalyzing = state.step !== "done" && state.step !== "error";
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore when typing in input/textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      switch (e.key) {
+        case "1":
+          if (summary) onTabChange("summary");
+          break;
+        case "2":
+          if (executionFlow) onTabChange("flow");
+          break;
+        case "3":
+          onTabChange("review");
+          break;
+        case "r":
+        case "R":
+          if (activeTab === "review" && !codeReview && !reviewLoading) onTriggerReview();
+          break;
+        case "Escape":
+          onReset();
+          break;
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [summary, executionFlow, codeReview, activeTab, reviewLoading, onTabChange, onTriggerReview, onReset]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -71,6 +112,29 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
               </div>
             )}
             <ThemeToggle theme={theme} onThemeChange={onThemeChange} />
+            {(summary || codeReview) && (
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button
+                  onClick={() => {
+                    const md = exportAsMarkdown(state);
+                    downloadMarkdown(md, `review-${mrData.pr.title.slice(0, 30).replace(/\s+/g, "-")}.md`);
+                  }}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card"
+                  title="Download as Markdown"
+                >
+                  <Download size={12} />
+                  <span className="hidden sm:block">.md</span>
+                </button>
+                <button
+                  onClick={() => window.print()}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card"
+                  title="Print"
+                >
+                  <Printer size={12} />
+                  <span className="hidden sm:block">Print</span>
+                </button>
+              </div>
+            )}
             <button
               onClick={onReset}
               className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card flex-shrink-0"
@@ -83,7 +147,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
 
           {/* Tab nav */}
           <div className="flex gap-1 pb-0 -mb-px overflow-x-auto">
-            {TABS.map((tab) => {
+            {TABS.map((tab, tabIdx) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
               const isReviewTab = tab.id === "review";
@@ -91,6 +155,16 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
               const isReviewPending = isReviewTab && !codeReview && !reviewLoading;
               const isReviewRunning = isReviewTab && reviewLoading;
               const canClick = isAvailable || isReviewPending;
+
+              // Tab preview text
+              let preview = "";
+              if (tab.id === "summary" && summary) {
+                preview = `${summary.changeType}: ${summary.purpose}`.slice(0, 50);
+              } else if (tab.id === "flow" && executionFlow) {
+                preview = `${executionFlow.flowGroups.length} layers`;
+              } else if (tab.id === "review" && codeReview) {
+                preview = `${codeReview.overallScore}/10 \u00b7 ${issueCount} issue${issueCount !== 1 ? "s" : ""}`;
+              }
 
               return (
                 <button
@@ -112,7 +186,14 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
                   }`}
                 >
                   <Icon size={14} />
-                  {tab.label}
+                  <span className="hidden sm:inline">{tab.label}</span>
+                  <span className="sm:hidden">{tab.label.split(" ")[0]}</span>
+                  {preview && (
+                    <span className="hidden sm:inline text-xs text-muted-foreground font-normal ml-0.5 truncate max-w-[120px]">
+                      · {preview}
+                    </span>
+                  )}
+                  <span className="hidden sm:inline text-muted-foreground/30 text-xs font-normal">{tabIdx + 1}</span>
                   {isReviewTab && criticalCount > 0 && (
                     <span className="w-4 h-4 rounded-full bg-destructive text-background text-xs flex items-center justify-center font-bold">
                       {criticalCount}
@@ -143,16 +224,71 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
         </div>
       </header>
 
+      {/* Stats bar */}
+      <div className="border-b border-border bg-card/50">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-2 flex items-center gap-3 flex-wrap text-xs">
+          <span className="text-muted-foreground">{mrData.pr.changedFiles} file{mrData.pr.changedFiles !== 1 ? "s" : ""}</span>
+          <span className="text-muted-foreground/40">·</span>
+          <span className="flex items-center gap-1 text-accent font-medium">
+            <Plus size={10} />+{mrData.pr.additions.toLocaleString()}
+          </span>
+          <span className="flex items-center gap-1 text-destructive font-medium">
+            <Minus size={10} />-{mrData.pr.deletions.toLocaleString()}
+          </span>
+          <span className="text-muted-foreground/40">·</span>
+          <span className="text-muted-foreground">{mrData.pr.commits} commit{mrData.pr.commits !== 1 ? "s" : ""}</span>
+          {codeReview && (
+            <>
+              <span className="text-muted-foreground/40">·</span>
+              <span className={`font-semibold ${codeReview.overallScore >= 8 ? "text-accent" : codeReview.overallScore >= 6 ? "text-yellow-500" : "text-destructive"}`}>
+                Score: {codeReview.overallScore}/10
+              </span>
+              {issueCount > 0 && (
+                <>
+                  <span className="text-muted-foreground/40">·</span>
+                  {criticalCount > 0 && (
+                    <span className="text-destructive font-medium">{criticalCount} critical</span>
+                  )}
+                  {warningCount > 0 && (
+                    <span className="text-yellow-500 font-medium">{warningCount} warning{warningCount !== 1 ? "s" : ""}</span>
+                  )}
+                </>
+              )}
+            </>
+          )}
+          {!codeReview && (
+            <>
+              <span className="text-muted-foreground/40">·</span>
+              <span className="text-muted-foreground">Score: —</span>
+            </>
+          )}
+          {cost && (
+            <>
+              <span className="text-muted-foreground/40">·</span>
+              <span className="text-muted-foreground" title={`~${cost.inputTokens.toLocaleString()} input + ~${cost.outputTokens.toLocaleString()} output tokens`}>
+                Est. {formatCost(cost.totalCost)}
+              </span>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* Content */}
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
         {activeTab === "summary" && summary && (
           <ChangeSummaryPanel summary={summary} mrData={mrData} />
         )}
+        {activeTab === "summary" && !summary && isAnalyzing && (
+          <SummarySkeleton />
+        )}
         {activeTab === "flow" && executionFlow && (
           <ExecutionFlowPanel flow={executionFlow} mrData={mrData} />
         )}
+        {activeTab === "flow" && !executionFlow && isAnalyzing && (
+          <FlowSkeleton />
+        )}
         {activeTab === "review" && codeReview && (
-          <CodeReviewPanel review={codeReview} />
+          <CodeReviewPanel review={codeReview} prUrl={prUrl} prToken={prToken} />
         )}
         {activeTab === "review" && !codeReview && !reviewLoading && (
           <motion.div

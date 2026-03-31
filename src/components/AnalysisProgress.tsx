@@ -173,8 +173,28 @@ export function AnalysisProgress({ step, prTitle, error, onReset, aiConfig, them
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
+            transition={{ delay: 0.5 }}
+            className="mt-6"
+          >
+            <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+              <span>Step {Math.min(currentIdx + 1, STEPS.length)} of {STEPS.length}</span>
+              <span>{Math.round(((currentIdx + (step === "done" ? 1 : 0.5)) / STEPS.length) * 100)}%</span>
+            </div>
+            <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+              <motion.div
+                className="h-full bg-foreground rounded-full"
+                initial={{ width: "0%" }}
+                animate={{ width: `${((currentIdx + (step === "done" ? 1 : 0.5)) / STEPS.length) * 100}%` }}
+                transition={{ duration: 0.5, ease: "easeOut" }}
+              />
+            </div>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
             transition={{ delay: 0.6 }}
-            className="flex items-center justify-center gap-2 mt-8"
+            className="flex items-center justify-center gap-2 mt-6"
           >
             <Cpu size={12} className="text-muted-foreground" />
             <p className="text-xs text-muted-foreground">

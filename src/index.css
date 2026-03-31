@@ -212,3 +212,13 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Print styles
+   ───────────────────────────────────────────────────────────────────────────── */
+@media print {
+  header, nav, .no-print { display: none !important; }
+  body { background: white !important; color: black !important; }
+  main { max-width: 100% !important; padding: 0 !important; }
+  .bg-card { background: white !important; border-color: #e5e7eb !important; }
+}

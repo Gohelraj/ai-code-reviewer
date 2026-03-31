@@ -1,8 +1,9 @@
 import { motion } from "framer-motion";
-import { AlertTriangle, Code2, TestTube, Layers, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { AlertTriangle, Code2, TestTube, Layers, TrendingUp, TrendingDown, Minus, Copy, Check } from "lucide-react";
 import type { ChangeSummary, MRData } from "../types";
 import { DiffViewer, DiffStats } from "./DiffViewer";
 import { useState } from "react";
+import toast from "react-hot-toast";
 
 interface ChangeSummaryPanelProps {
   summary: ChangeSummary;
@@ -40,7 +41,36 @@ function ImpactBadge({ impact }: { impact: string }) {
 
 export function ChangeSummaryPanel({ summary, mrData }: ChangeSummaryPanelProps) {
   const [showAllDiffs, setShowAllDiffs] = useState(false);
+  const [copied, setCopied] = useState(false);
   const displayedFiles = showAllDiffs ? mrData.files : mrData.files.slice(0, 5);
+
+  const copySummary = () => {
+    const text = [
+      `# Change Summary: ${summary.purpose}`,
+      ``,
+      `**Type:** ${summary.changeType} | **Scope:** ${summary.scope}`,
+      summary.breakingChanges ? `**⚠️ Breaking Changes:** ${summary.breakingChangesDescription}` : "",
+      ``,
+      `## Summary`,
+      summary.summary,
+      ``,
+      `## Key Changes`,
+      ...summary.keyChanges.map((c) => `- **${c.area}** (${c.impact}): ${c.description}`),
+      ``,
+      `## Technologies`,
+      summary.techStack.join(", "),
+      ``,
+      `## Testing`,
+      summary.testingStatus,
+      ``,
+      `## Stats`,
+      `${mrData.pr.changedFiles} files changed, +${mrData.pr.additions}/-${mrData.pr.deletions} lines, ${mrData.pr.commits} commit(s)`,
+    ].filter(Boolean).join("\n");
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    toast.success("Summary copied to clipboard");
+    setTimeout(() => setCopied(false), 2500);
+  };
 
   return (
     <motion.div
@@ -70,6 +100,13 @@ export function ChangeSummaryPanel({ summary, mrData }: ChangeSummaryPanelProps)
             </div>
             <h2 className="text-lg font-bold text-foreground">{summary.purpose}</h2>
           </div>
+          <button
+            onClick={copySummary}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card flex-shrink-0"
+          >
+            {copied ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
+            {copied ? "Copied!" : "Copy"}
+          </button>
         </div>
 
         <p className="text-sm text-muted-foreground leading-relaxed mb-4">{summary.summary}</p>

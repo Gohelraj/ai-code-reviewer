@@ -6,6 +6,8 @@ export interface FileDiff {
   changes: number;
   patch: string | null;
   blobUrl: string | null;
+  /** Full file content at HEAD (post-change). Populated for context-aware code review. */
+  fullContent?: string | null;
 }
 
 export interface PRInfo {

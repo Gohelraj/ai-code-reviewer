@@ -1,9 +1,12 @@
 import { useState, useCallback } from "react";
+import toast from "react-hot-toast";
 import { InputForm } from "./components/InputForm";
 import type { SubmitPayload } from "./components/InputForm";
 import { AnalysisProgress } from "./components/AnalysisProgress";
 import { ResultsDashboard } from "./components/ResultsDashboard";
 import { fetchMRDiff, analyzeSummary, analyzeExecutionFlow, analyzeCodeReview } from "./lib/api";
+import { saveAnalysis } from "./lib/history";
+import type { HistoryEntry } from "./lib/history";
 import type { AnalysisState } from "./types";
 import type { AIConfig } from "./components/AISettings";
 import { useDarkMode } from "./lib/useDarkMode";
@@ -22,6 +25,8 @@ function App() {
   const [state, setState] = useState<AnalysisState>(INITIAL_STATE);
   const [activeAIConfig, setActiveAIConfig] = useState<AIConfig | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
+  const [analysisUrl, setAnalysisUrl] = useState("");
+  const [analysisToken, setAnalysisToken] = useState<string | undefined>(undefined);
   const { theme, setTheme } = useDarkMode();
 
   const updateState = useCallback((patch: Partial<AnalysisState>) => {
@@ -31,6 +36,8 @@ function App() {
   const handleAnalyze = useCallback(async ({ url, token, aiConfig }: SubmitPayload) => {
     setState({ ...INITIAL_STATE, step: "fetching" });
     setActiveAIConfig(aiConfig);
+    setAnalysisUrl(url);
+    setAnalysisToken(token);
 
     try {
       // Step 1: Fetch diff
@@ -54,15 +61,33 @@ function App() {
 
       // Done — code review is triggered manually by the user
       updateState({ step: "done" });
+      toast.success("Analysis complete!");
+
+      // Save to history
+      // We need to get the latest state, so use a callback
+      setState((prev) => {
+        saveAnalysis(url, prev, aiConfig);
+        return prev;
+      });
     } catch (err) {
       const error = err instanceof Error ? err.message : "An unexpected error occurred";
       updateState({ step: "error", error });
+      toast.error(error);
     }
   }, [updateState]);
 
   const handleReset = useCallback(() => {
     setState(INITIAL_STATE);
     setActiveAIConfig(null);
+    setReviewLoading(false);
+    setAnalysisUrl("");
+    setAnalysisToken(undefined);
+  }, []);
+
+  const handleLoadHistory = useCallback((entry: HistoryEntry) => {
+    setState(entry.state);
+    setActiveAIConfig(entry.aiConfig);
+    setAnalysisUrl(entry.url);
     setReviewLoading(false);
   }, []);
 
@@ -76,9 +101,19 @@ function App() {
     try {
       const codeReview = await analyzeCodeReview(state.mrData, activeAIConfig);
       updateState({ codeReview, activeTab: "review" });
+      toast.success("Code review complete!");
+
+      // Update history with review
+      setState((prev) => {
+        if (analysisUrl && activeAIConfig) {
+          saveAnalysis(analysisUrl, prev, activeAIConfig);
+        }
+        return prev;
+      });
     } catch (err) {
       const error = err instanceof Error ? err.message : "Code review failed";
       updateState({ error });
+      toast.error(error);
     } finally {
       setReviewLoading(false);
     }
@@ -86,7 +121,7 @@ function App() {
 
   // Show input form
   if (state.step === "idle") {
-    return <InputForm onSubmit={handleAnalyze} isLoading={false} theme={theme} onThemeChange={setTheme} />;
+    return <InputForm onSubmit={handleAnalyze} isLoading={false} theme={theme} onThemeChange={setTheme} onLoadHistory={handleLoadHistory} />;
   }
 
   // Show analysis in progress or error
@@ -103,6 +138,8 @@ function App() {
           onThemeChange={setTheme}
           reviewLoading={reviewLoading}
           onTriggerReview={handleTriggerReview}
+          prUrl={analysisUrl}
+          prToken={analysisToken}
         />
       );
     }
@@ -131,6 +168,8 @@ function App() {
       onThemeChange={setTheme}
       reviewLoading={reviewLoading}
       onTriggerReview={handleTriggerReview}
+      prUrl={analysisUrl}
+      prToken={analysisToken}
     />
   );
 }

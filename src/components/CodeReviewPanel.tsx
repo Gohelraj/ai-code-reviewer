@@ -2,12 +2,16 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   Shield, Zap, CheckCircle2, XCircle, AlertTriangle, MessageSquare,
-  ChevronDown, ChevronUp, Copy, Check, Star, BookOpen, Lock, Gauge
+  ChevronDown, ChevronUp, Copy, Check, Star, BookOpen, Lock, Gauge, Send, FileCode, MapPin
 } from "lucide-react";
+import toast from "react-hot-toast";
 import type { CodeReview, ReviewIssue } from "../types";
+import { postReviewComment } from "../lib/github-comment";
 
 interface CodeReviewPanelProps {
   review: CodeReview;
+  prUrl?: string;
+  prToken?: string;
 }
 
 type SeverityConfigEntry = { icon: typeof XCircle; label: string; bg: string; border: string; text: string; badge: string };
@@ -80,7 +84,7 @@ function CodeBlock({ code, label, variant = "neutral" }: { code: string; label: 
         </button>
       </div>
       <div className={`relative rounded-xl border ${colorMap[variant]} overflow-hidden`}>
-        <pre className={`text-xs font-mono p-4 overflow-x-auto whitespace-pre leading-relaxed ${textMap[variant]}`}><code>{code.trim()}</code></pre>
+        <pre className={`text-xs font-mono p-4 overflow-x-auto whitespace-pre-wrap break-words leading-relaxed ${textMap[variant]}`}><code>{code.trim()}</code></pre>
       </div>
     </div>
   );
@@ -96,7 +100,7 @@ function IssueCard({ issue, index }: { issue: ReviewIssue; index: number }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04, duration: 0.3 }}
-      className={`border rounded-2xl overflow-hidden ${config.border} bg-card`}
+      className={`border rounded-2xl overflow-hidden ${config.border} bg-card ${issue.severity === "critical" ? "border-l-4 border-l-destructive" : ""}`}
     >
       <button
         onClick={() => setExpanded(!expanded)}
@@ -113,11 +117,20 @@ function IssueCard({ issue, index }: { issue: ReviewIssue; index: number }) {
             </span>
           </div>
           <p className="text-sm font-semibold text-foreground leading-snug">{issue.title}</p>
-          {issue.file && (
-            <div className="flex items-center gap-1.5 mt-1.5">
-              <span className="text-xs text-muted-foreground font-mono bg-muted px-2 py-0.5 rounded-md truncate max-w-[300px]">
-                {issue.file}{issue.lineHint ? ` · ${issue.lineHint}` : ""}
-              </span>
+          {(issue.file || issue.lineHint) && (
+            <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+              {issue.file && (
+                <span className="inline-flex items-center gap-1 text-xs font-mono text-foreground/80 bg-muted border border-border px-2 py-0.5 rounded-md">
+                  <FileCode size={11} className="text-muted-foreground flex-shrink-0" />
+                  <span className="max-w-[260px] truncate" title={issue.file}>{issue.file}</span>
+                </span>
+              )}
+              {issue.lineHint && (
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-2 py-0.5 rounded-md">
+                  <MapPin size={10} className="flex-shrink-0" />
+                  {issue.lineHint}
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -126,6 +139,21 @@ function IssueCard({ issue, index }: { issue: ReviewIssue; index: number }) {
 
       {expanded && (
         <div className={`border-t px-5 py-5 space-y-5 ${config.border} ${config.bg}`}>
+          {/* Location banner — shown prominently at top of expanded section */}
+          {(issue.file || issue.lineHint) && (
+            <div className="flex items-center gap-2 flex-wrap p-3 rounded-xl bg-muted/60 border border-border">
+              <FileCode size={13} className="text-muted-foreground flex-shrink-0" />
+              {issue.file && (
+                <code className="text-xs font-mono text-foreground break-all">{issue.file}</code>
+              )}
+              {issue.lineHint && (
+                <span className="ml-auto inline-flex items-center gap-1 text-xs font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-2 py-0.5 rounded-md whitespace-nowrap">
+                  <MapPin size={10} />
+                  {issue.lineHint}
+                </span>
+              )}
+            </div>
+          )}
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Issue</p>
             <p className="text-sm text-foreground leading-relaxed">{issue.description}</p>
@@ -145,20 +173,17 @@ function IssueCard({ issue, index }: { issue: ReviewIssue; index: number }) {
               <p className="text-sm text-foreground leading-relaxed">{issue.impact}</p>
             </div>
           )}
-
-          {issue.lineHint && !issue.file && (
-            <p className="text-xs text-muted-foreground">
-              <span className="font-medium">Location: </span>{issue.lineHint}
-            </p>
-          )}
         </div>
       )}
     </motion.div>
   );
 }
 
-export function CodeReviewPanel({ review }: CodeReviewPanelProps) {
+export function CodeReviewPanel({ review, prUrl, prToken }: CodeReviewPanelProps) {
   const [copied, setCopied] = useState(false);
+  const [posting, setPosting] = useState(false);
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
+  const [groupBy, setGroupBy] = useState<"severity" | "file">("severity");
   const verdictConfig = VERDICT_CONFIG[review.overallVerdict] ?? DEFAULT_VERDICT;
   const VerdictIcon = verdictConfig.icon;
 
@@ -166,25 +191,150 @@ export function CodeReviewPanel({ review }: CodeReviewPanelProps) {
   const warningCount = review.issues.filter((i) => i.severity === "warning").length;
   const suggestionCount = review.issues.filter((i) => i.severity === "suggestion" || i.severity === "nitpick").length;
 
+  const toggleFilter = (severity: string) => {
+    setActiveFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(severity)) next.delete(severity); else next.add(severity);
+      return next;
+    });
+  };
+
+  const filteredIssues = activeFilters.size === 0
+    ? review.issues
+    : review.issues.filter((i) => activeFilters.has(i.severity));
+
+  const sortedIssues = [...filteredIssues].sort((a, b) => {
+    const order: Record<string, number> = { critical: 0, warning: 1, suggestion: 2, nitpick: 3 };
+    return (order[a.severity] ?? 4) - (order[b.severity] ?? 4);
+  });
+
+  // Group by file
+  const issuesByFile = groupBy === "file"
+    ? sortedIssues.reduce<Record<string, typeof sortedIssues>>((acc, issue) => {
+        const key = issue.file || "General";
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(issue);
+        return acc;
+      }, {})
+    : null;
+
+  /** Build full GitLab/GitHub-compatible markdown for the review */
+  const buildReviewMarkdown = () => {
+    const lines: string[] = [];
+    const emoji = review.overallScore >= 8 ? '✅' : review.overallScore >= 6 ? '⚠️' : '🚨';
+
+    lines.push(`## ${emoji} Code Review — ${verdictConfig.label} (${review.overallScore}/10)`);
+    lines.push(``);
+    lines.push(review.executiveSummary);
+    lines.push(``);
+
+    // Issues
+    if (review.issues.length > 0) {
+      lines.push(`### Issues (${review.issues.length})`);
+      lines.push(``);
+
+      for (const issue of review.issues) {
+        const sevEmoji = issue.severity === 'critical' ? '🔴' : issue.severity === 'warning' ? '🟡' : '🔵';
+        lines.push(`#### ${sevEmoji} [${issue.severity.toUpperCase()}] ${issue.title}`);
+        lines.push(``);
+        if (issue.file) {
+          lines.push(`📁 \`${issue.file}\`${issue.lineHint ? ` · ${issue.lineHint}` : ''}`);
+          lines.push(``);
+        }
+        if (issue.category) {
+          lines.push(`**Category:** ${issue.category}`);
+          lines.push(``);
+        }
+        lines.push(issue.description);
+        lines.push(``);
+
+        if (issue.currentCode) {
+          lines.push(`**Problematic Code:**`);
+          lines.push('```');
+          lines.push(issue.currentCode.trim());
+          lines.push('```');
+          lines.push(``);
+        }
+
+        if (issue.suggestedFix) {
+          lines.push(`**Suggested Fix:**`);
+          lines.push('```');
+          lines.push(issue.suggestedFix.trim());
+          lines.push('```');
+          lines.push(``);
+        }
+
+        if (issue.impact) {
+          lines.push(`> **Impact:** ${issue.impact}`);
+          lines.push(``);
+        }
+
+        lines.push(`---`);
+        lines.push(``);
+      }
+    }
+
+    // Strengths
+    if (review.strengths.length > 0) {
+      lines.push(`### ✨ Strengths`);
+      lines.push(``);
+      for (const s of review.strengths) {
+        lines.push(`- ${s}`);
+      }
+      lines.push(``);
+    }
+
+    // Architecture
+    if (review.architectureObservations.length > 0) {
+      lines.push(`### 🏛️ Architecture Observations`);
+      lines.push(``);
+      for (const obs of review.architectureObservations) {
+        lines.push(`**${obs.aspect}:** ${obs.observation}`);
+        lines.push(`→ *${obs.recommendation}*`);
+        lines.push(``);
+      }
+    }
+
+    // Security
+    if (review.securityConsiderations.length > 0) {
+      lines.push(`### 🔒 Security`);
+      lines.push(``);
+      for (const s of review.securityConsiderations) {
+        lines.push(`- ${s}`);
+      }
+      lines.push(``);
+    }
+
+    // Performance
+    if (review.performanceConsiderations.length > 0) {
+      lines.push(`### ⚡ Performance`);
+      lines.push(``);
+      for (const p of review.performanceConsiderations) {
+        lines.push(`- ${p}`);
+      }
+      lines.push(``);
+    }
+
+    // Testing + Merge readiness
+    lines.push(`### 🧪 Testing Assessment`);
+    lines.push(``);
+    lines.push(review.testingAssessment);
+    lines.push(``);
+    lines.push(`### 🚀 Merge Readiness`);
+    lines.push(``);
+    lines.push(review.mergeReadiness);
+    lines.push(``);
+    lines.push(`---`);
+    lines.push(`*Generated by MergeAI Reviewer*`);
+
+    return lines.join('\n');
+  };
+
   const copyReview = () => {
-    const text = [
-      `# Code Review: ${review.overallVerdict.toUpperCase()}`,
-      `Score: ${review.overallScore}/10`,
-      ``,
-      `## Summary`,
-      review.executiveSummary,
-      ``,
-      `## Issues (${review.issues.length} total)`,
-      ...review.issues.map((i) => `### [${i.severity.toUpperCase()}] ${i.title}\n${i.description}\n\nFix: ${i.suggestedFix}`),
-      ``,
-      `## Strengths`,
-      ...review.strengths.map((s) => `- ${s}`),
-      ``,
-      `## Merge Readiness`,
-      review.mergeReadiness,
-    ].join("\n");
+    const text = buildReviewMarkdown();
     navigator.clipboard.writeText(text);
     setCopied(true);
+    toast.success("Review markdown copied — paste directly into GitLab/GitHub");
     setTimeout(() => setCopied(false), 2500);
   };
 
@@ -206,13 +356,41 @@ export function CodeReviewPanel({ review }: CodeReviewPanelProps) {
                 {verdictConfig.label}
               </div>
             </div>
-            <button
-              onClick={copyReview}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card"
-            >
-              {copied ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
-              {copied ? "Copied!" : "Copy Review"}
-            </button>
+            <div className="flex items-center gap-2">
+              {prUrl && prToken && (
+                <button
+                  onClick={async () => {
+                    if (!confirm("Post this review as a comment on the PR/MR?")) return;
+                    setPosting(true);
+                    try {
+                      const body = buildReviewMarkdown();
+                      await postReviewComment({ url: prUrl, token: prToken, body });
+                      toast.success("Review posted to PR!");
+                    } catch (err: unknown) {
+                      toast.error(`Failed to post: ${err instanceof Error ? err.message : "Unknown error"}`);
+                    } finally {
+                      setPosting(false);
+                    }
+                  }}
+                  disabled={posting}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card disabled:opacity-50"
+                >
+                  {posting ? (
+                    <span className="w-3 h-3 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
+                  ) : (
+                    <Send size={12} />
+                  )}
+                  {posting ? "Posting..." : "Post to PR"}
+                </button>
+              )}
+              <button
+                onClick={copyReview}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card"
+              >
+                {copied ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
+                {copied ? "Copied!" : "Copy as MD"}
+              </button>
+            </div>
           </div>
 
           {/* Score */}
@@ -271,21 +449,91 @@ export function CodeReviewPanel({ review }: CodeReviewPanelProps) {
       {/* Issues */}
       {review.issues.length > 0 && (
         <div>
-          <h3 className="text-base font-semibold text-foreground mb-4 flex items-center gap-2">
-            <Shield size={16} />
-            Issues & Suggestions
-            <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{review.issues.length}</span>
-          </h3>
-          <div className="space-y-3">
-            {review.issues
-              .sort((a, b) => {
-                const order = { critical: 0, warning: 1, suggestion: 2, nitpick: 3 };
-                return order[a.severity] - order[b.severity];
-              })
-              .map((issue, i) => (
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
+              <Shield size={16} />
+              Issues & Suggestions
+              <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{filteredIssues.length}{activeFilters.size > 0 ? `/${review.issues.length}` : ""}</span>
+            </h3>
+            <div className="flex items-center gap-2">
+              {/* Severity filters */}
+              <div className="flex gap-1">
+                {[
+                  { key: "critical", label: "Critical", count: criticalCount, color: "bg-destructive/10 text-destructive border-destructive/20 hover:bg-destructive/20" },
+                  { key: "warning", label: "Warning", count: warningCount, color: "bg-yellow-50 text-yellow-600 border-yellow-200 hover:bg-yellow-100 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20" },
+                  { key: "suggestion", label: "Suggestion", count: suggestionCount, color: "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20" },
+                ].filter((f) => f.count > 0).map((f) => (
+                  <button
+                    key={f.key}
+                    onClick={() => toggleFilter(f.key)}
+                    className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-all font-medium ${
+                      activeFilters.has(f.key)
+                        ? `${f.color} ring-1 ring-current/20`
+                        : activeFilters.size > 0
+                        ? "bg-muted/30 text-muted-foreground/50 border-border"
+                        : `${f.color}`
+                    }`}
+                  >
+                    {f.label}
+                    <span className="font-bold">{f.count}</span>
+                  </button>
+                ))}
+                {activeFilters.size > 0 && (
+                  <button
+                    onClick={() => setActiveFilters(new Set())}
+                    className="text-xs text-muted-foreground hover:text-foreground px-1.5 py-1 transition-colors"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              {/* Group toggle */}
+              <div className="flex border border-border rounded-lg overflow-hidden">
+                <button
+                  onClick={() => setGroupBy("severity")}
+                  className={`text-xs px-2 py-1 transition-colors ${groupBy === "severity" ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  Severity
+                </button>
+                <button
+                  onClick={() => setGroupBy("file")}
+                  className={`text-xs px-2 py-1 transition-colors ${groupBy === "file" ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  File
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {groupBy === "severity" ? (
+            <div className="space-y-3">
+              {sortedIssues.map((issue, i) => (
                 <IssueCard key={issue.id} issue={issue} index={i} />
               ))}
-          </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {Object.entries(issuesByFile!).sort(([, a], [, b]) => {
+                const critA = a.filter((i) => i.severity === "critical").length;
+                const critB = b.filter((i) => i.severity === "critical").length;
+                return critB - critA;
+              }).map(([file, issues]) => (
+                <div key={file}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-mono font-medium text-foreground bg-muted px-2 py-0.5 rounded-md">
+                      {file}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{issues.length} issue{issues.length !== 1 ? "s" : ""}</span>
+                  </div>
+                  <div className="space-y-3">
+                    {issues.map((issue, i) => (
+                      <IssueCard key={issue.id} issue={issue} index={i} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

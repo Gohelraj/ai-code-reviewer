@@ -55,10 +55,29 @@ async function fetchGitHubPR(url: string, token?: string): Promise<MRData> {
     url,
   };
 
+  type GHFile = {
+    filename: string; status: string; additions: number; deletions: number;
+    changes: number; patch?: string; blob_url?: string; raw_url?: string;
+  };
+
+  // Fetch full file content for context-aware review (cap each file at 30k chars)
+  const PER_FILE_CAP = 30_000;
+  const contentResults = await Promise.allSettled(
+    (files as GHFile[]).map(async (f) => {
+      if (!f.raw_url || f.status === "removed") return null;
+      try {
+        const res = await fetch(f.raw_url, { headers });
+        if (!res.ok) return null;
+        const text = await res.text();
+        return text.length <= PER_FILE_CAP ? text : text.slice(0, PER_FILE_CAP) + "\n// ... (file truncated — too large)";
+      } catch { return null; }
+    })
+  );
+
   return {
     platform: "github",
     pr: prInfo,
-    files: files.map((f: { filename: string; status: string; additions: number; deletions: number; changes: number; patch?: string; blob_url?: string }) => ({
+    files: (files as GHFile[]).map((f, i) => ({
       filename: f.filename,
       status: f.status,
       additions: f.additions,
@@ -66,6 +85,7 @@ async function fetchGitHubPR(url: string, token?: string): Promise<MRData> {
       changes: f.changes,
       patch: f.patch ?? null,
       blobUrl: f.blob_url ?? null,
+      fullContent: contentResults[i].status === "fulfilled" ? contentResults[i].value : null,
     })),
   };
 }
@@ -91,7 +111,7 @@ async function fetchGitLabMR(url: string, token?: string): Promise<MRData> {
 
   // Requests go to /api/gitlab/... which is proxied to gitlab.com
   const [mrRes, changesRes] = await Promise.all([
-    fetch(`/api/gitlab/api/v4/projects/${encodedPath}/merge_requests/${mrIid}`, { headers }),
+    fetch(`/api/gitlab/api/v4/projects/${encodedPath}/merge_requests/${mrIid}?include_diverged_commits_count=true`, { headers }),
     fetch(`/api/gitlab/api/v4/projects/${encodedPath}/merge_requests/${mrIid}/changes`, { headers }),
   ]);
 
@@ -104,6 +124,16 @@ async function fetchGitLabMR(url: string, token?: string): Promise<MRData> {
   type GitLabChange = { new_path: string; diff?: string; new_file: boolean; deleted_file: boolean; renamed_file: boolean; additions?: number; deletions?: number };
   const changes: GitLabChange[] = changesData.changes ?? [];
 
+  // GitLab changes API does not reliably return additions/deletions per file;
+  // count +/- lines from the raw diff string instead
+  function parseDiffStats(diff: string): { additions: number; deletions: number } {
+    const lines = diff.split("\n");
+    return {
+      additions: lines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length,
+      deletions: lines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length,
+    };
+  }
+
   const prInfo: PRInfo = {
     title: mr.title,
     description: mr.description ?? "",
@@ -111,8 +141,14 @@ async function fetchGitLabMR(url: string, token?: string): Promise<MRData> {
     headBranch: mr.source_branch,
     author: mr.author?.username ?? "unknown",
     state: mr.state,
-    additions: changes.reduce((s, c) => s + (c.additions ?? 0), 0),
-    deletions: changes.reduce((s, c) => s + (c.deletions ?? 0), 0),
+    additions: changes.reduce((s, c) => {
+      if (c.additions != null) return s + c.additions;
+      return s + (c.diff ? parseDiffStats(c.diff).additions : 0);
+    }, 0),
+    deletions: changes.reduce((s, c) => {
+      if (c.deletions != null) return s + c.deletions;
+      return s + (c.diff ? parseDiffStats(c.diff).deletions : 0);
+    }, 0),
     changedFiles: changes.length,
     commits: mr.commits_count ?? 0,
     createdAt: mr.created_at,
@@ -122,14 +158,38 @@ async function fetchGitLabMR(url: string, token?: string): Promise<MRData> {
   return {
     platform: "gitlab",
     pr: prInfo,
-    files: changes.map((c) => ({
-      filename: c.new_path,
-      status: c.new_file ? "added" : c.deleted_file ? "removed" : c.renamed_file ? "renamed" : "modified",
-      additions: c.additions ?? 0,
-      deletions: c.deletions ?? 0,
-      changes: (c.additions ?? 0) + (c.deletions ?? 0),
-      patch: c.diff ?? null,
-      blobUrl: null,
+    files: await Promise.all(changes.map(async (c, i) => {
+      const additions = c.additions ?? (c.diff ? parseDiffStats(c.diff).additions : 0);
+      const deletions = c.deletions ?? (c.diff ? parseDiffStats(c.diff).deletions : 0);
+
+      // Fetch full file content for context-aware review
+      let fullContent: string | null = null;
+      if (!c.deleted_file && c.new_path) {
+        try {
+          const encodedFile = encodeURIComponent(c.new_path);
+          const ref = encodeURIComponent(mr.source_branch);
+          const rawRes = await fetch(
+            `/api/gitlab/api/v4/projects/${encodedPath}/repository/files/${encodedFile}/raw?ref=${ref}`,
+            { headers }
+          );
+          if (rawRes.ok) {
+            const text = await rawRes.text();
+            const PER_FILE_CAP = 30_000;
+            fullContent = text.length <= PER_FILE_CAP ? text : text.slice(0, PER_FILE_CAP) + "\n// ... (file truncated — too large)";
+          }
+        } catch { /* leave fullContent null */ }
+      }
+
+      return {
+        filename: c.new_path,
+        status: c.new_file ? "added" : c.deleted_file ? "removed" : c.renamed_file ? "renamed" : "modified",
+        additions,
+        deletions,
+        changes: additions + deletions,
+        patch: c.diff ?? null,
+        blobUrl: null,
+        fullContent,
+      };
     })),
   };
 }
@@ -299,19 +359,58 @@ const REVIEW_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 };
 
-// ─── Diff builder (shared prompt content) ─────────────────────────────────────
+// ─── Diff / context builders ──────────────────────────────────────────────────
 
-const MAX_PATCH_CHARS = 600;
+const PER_FILE_PATCH_CAP = 8_000;   // max diff chars per file (summary/flow)
+const PER_FILE_FULL_CAP  = 25_000;  // max full-content chars per file (review)
+const TOTAL_CONTEXT_CAP  = 120_000; // total review context budget (~30k tokens)
 
+/** Used for summary + flow: full diffs, no file content */
 function buildDiffContent(files: FileDiff[]): string {
   return files
     .map((f) => {
-      const patchPreview = f.patch
-        ? f.patch.slice(0, MAX_PATCH_CHARS) + (f.patch.length > MAX_PATCH_CHARS ? "\n... (truncated)" : "")
-        : "(binary or no patch)";
-      return `### ${f.filename} [${f.status}] +${f.additions}/-${f.deletions}\n${patchPreview}`;
+      const patch = f.patch
+        ? f.patch.slice(0, PER_FILE_PATCH_CAP) + (f.patch.length > PER_FILE_PATCH_CAP ? "\n... (diff truncated)" : "")
+        : "(binary or no diff)";
+      return `### ${f.filename} [${f.status}] +${f.additions}/-${f.deletions}\n${patch}`;
     })
     .join("\n\n");
+}
+
+/**
+ * Used for code review: full file content + diff per changed file.
+ * Files sorted by change size (most-changed first). Respects total token budget.
+ */
+function buildContextAwareDiff(files: FileDiff[]): string {
+  const sorted = [...files].sort((a, b) => (b.additions + b.deletions) - (a.additions + a.deletions));
+  let budget = TOTAL_CONTEXT_CAP;
+  const parts: string[] = [];
+
+  for (const f of sorted) {
+    if (budget <= 500) {
+      parts.push(`### ${f.filename} — omitted (context budget reached)`);
+      continue;
+    }
+
+    const header = `### ${f.filename} [${f.status}] +${f.additions}/-${f.deletions}`;
+    const sections: string[] = [header];
+
+    if (f.fullContent && f.status !== "removed") {
+      const content = f.fullContent.slice(0, PER_FILE_FULL_CAP);
+      sections.push(`\nFULL FILE (current state after changes):\n\`\`\`\n${content}\n\`\`\``);
+    }
+
+    if (f.patch) {
+      const patch = f.patch.slice(0, PER_FILE_PATCH_CAP) + (f.patch.length > PER_FILE_PATCH_CAP ? "\n... (diff truncated)" : "");
+      sections.push(`\nDIFF (what changed):\n${patch}`);
+    }
+
+    const block = sections.join("\n");
+    budget -= block.length;
+    parts.push(block);
+  }
+
+  return parts.join("\n\n---\n\n");
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -371,23 +470,42 @@ Organize files into execution flow groups (Route/Entry → Middleware → Contro
 
 export async function analyzeCodeReview(mrData: MRData, aiConfig: AIConfig): Promise<CodeReview> {
   const { pr, files } = mrData;
-  const diffContent = buildDiffContent(files);
+  const diffContent = buildContextAwareDiff(files);
 
   if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required. Please configure it in AI Settings.");
 
-  const systemPrompt = `You are a very senior software engineer (10+ years) performing a thorough code review. Be precise, constructive, and insightful. Focus on things that matter. Always return valid JSON. For optional string fields like file, lineHint, currentCode, impact — always provide a string value (use "" if not applicable).`;
-    const userPrompt = `PR Title: ${pr.title}
+  const hasFullContent = files.some((f) => f.fullContent);
+  const systemPrompt = `You are a very senior software engineer (10+ years) performing a thorough, context-aware code review.
+
+For each changed file you receive:
+${hasFullContent
+  ? "1. FULL FILE — the complete current state of the file after this PR's changes, so you can see imports, types, existing patterns, and how all code fits together\n2. DIFF — the exact lines added/removed"
+  : "- DIFF — the exact lines added/removed (full file context unavailable for this repository)"}
+
+Use the full file content (when present) to catch issues that only appear in context:
+- Functions called with wrong arguments elsewhere in the same file
+- Duplicate logic or existing helpers that should be reused  
+- Violated naming/style conventions established in the file
+- Type mismatches that span the full file scope
+- N+1 queries or missing eager-loads visible from the full model/query context
+- Security issues like hardcoded secrets, missing auth checks, injection vectors
+
+Be precise: always provide the exact file path and line reference when flagging an issue.
+Always return valid JSON. For optional string fields (file, lineHint, currentCode, impact) always provide a string value (use "" if not applicable).`;
+
+  const userPrompt = `PR Title: ${pr.title}
 PR Description: ${pr.description || "No description"}
 Author: ${pr.author}
+Branch: ${pr.headBranch} → ${pr.baseBranch}
 Stats: ${pr.changedFiles} files changed, +${pr.additions}/-${pr.deletions}
 
-FILE DIFFS:
+FILE CONTEXT + DIFFS:
 ${diffContent}
 
-Perform a comprehensive senior-level code review.`;
+Perform a comprehensive senior-level code review using the full file context above.`;
 
-    return callOpenRouter<CodeReview>(aiConfig.apiKey, aiConfig.model, [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ], REVIEW_SCHEMA);
+  return callOpenRouter<CodeReview>(aiConfig.apiKey, aiConfig.model, [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt },
+  ], REVIEW_SCHEMA);
 }
