@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import {
   Shield, Zap, CheckCircle2, XCircle, AlertTriangle, MessageSquare,
   ChevronDown, ChevronUp, Copy, Check, Star, BookOpen, Lock, Gauge, Send, FileCode, MapPin,
-  Square, CheckSquare, ListChecks, EyeOff, Eye, ClipboardCopy, Play, RefreshCw
+  Square, CheckSquare, ListChecks, EyeOff, Eye, ClipboardCopy, Play, RefreshCw, Key
 } from "lucide-react";
 import toast from "react-hot-toast";
 import type { CodeReview, ReviewIssue, MRData } from "../types";
@@ -17,6 +17,7 @@ interface CodeReviewPanelProps {
   previousReview?: CodeReview | null;
   reviewLoading?: boolean;
   onTriggerReview?: () => void;
+  onTokenChange?: (token: string) => void;
 }
 
 type SeverityConfigEntry = { icon: typeof XCircle; label: string; bg: string; border: string; text: string; badge: string };
@@ -287,11 +288,15 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
   );
 }
 
-export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview, reviewLoading, onTriggerReview }: CodeReviewPanelProps) {
+export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview, reviewLoading, onTriggerReview, onTokenChange }: CodeReviewPanelProps) {
   const [copied, setCopied] = useState(false);
   const [posting, setPosting] = useState(false);
   const [postingSelected, setPostingSelected] = useState(false);
   const [selectedIssues, setSelectedIssues] = useState<Set<string>>(new Set());
+  const [localToken, setLocalToken] = useState("");
+  const effectiveToken = prToken || localToken || "";
+  const hasToken = !!effectiveToken;
+  const canPost = !!prUrl && hasToken;
   const [dismissedIssues, setDismissedIssues] = useState<Set<string>>(new Set());
   const [showDismissed, setShowDismissed] = useState(false);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
@@ -484,7 +489,7 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
   const dismissedCount = dismissedIssues.size;
 
   const handlePostSelected = async () => {
-    if (!prUrl || !prToken || selectedCount === 0) return;
+    if (!prUrl || !effectiveToken || selectedCount === 0) return;
     const selectedList = review.issues.filter((i) => selectedIssues.has(i.id));
     if (!confirm(`Post ${selectedList.length} issue${selectedList.length !== 1 ? "s" : ""} as comments on the ${mrData?.platform === "gitlab" ? "MR" : "PR"}?`)) return;
 
@@ -492,7 +497,7 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
     try {
       const result = await postInlineComments({
         url: prUrl,
-        token: prToken,
+        token: effectiveToken,
         issues: selectedList,
         diffRefs: mrData?.diffRefs,
       });
@@ -534,14 +539,14 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {prUrl && prToken && (
+              {canPost && (
                 <button
                   onClick={async () => {
                     if (!confirm("Post this review as a comment on the PR/MR?")) return;
                     setPosting(true);
                     try {
                       const body = buildReviewMarkdown();
-                      await postReviewComment({ url: prUrl, token: prToken, body });
+                      await postReviewComment({ url: prUrl!, token: effectiveToken, body });
                       toast.success("Review posted to PR!");
                     } catch (err: unknown) {
                       toast.error(`Failed to post: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -660,7 +665,7 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
             </h3>
             <div className="flex items-center gap-2 flex-wrap">
               {/* Selection controls */}
-              {prUrl && prToken && (
+              {prUrl && (
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={allVisibleSelected ? deselectAll : selectAllVisible}
@@ -747,7 +752,7 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
                   issue={issue}
                   index={i}
                   selected={selectedIssues.has(issue.id)}
-                  onToggleSelect={prUrl && prToken ? () => toggleIssueSelection(issue.id) : undefined}
+                  onToggleSelect={prUrl ? () => toggleIssueSelection(issue.id) : undefined}
                   dismissed={dismissedIssues.has(issue.id)}
                   onDismiss={() => dismissIssue(issue.id)}
                   onRestore={() => restoreIssue(issue.id)}
@@ -775,7 +780,7 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
                         issue={issue}
                         index={i}
                         selected={selectedIssues.has(issue.id)}
-                        onToggleSelect={prUrl && prToken ? () => toggleIssueSelection(issue.id) : undefined}
+                        onToggleSelect={prUrl ? () => toggleIssueSelection(issue.id) : undefined}
                         dismissed={dismissedIssues.has(issue.id)}
                         onDismiss={() => dismissIssue(issue.id)}
                         onRestore={() => restoreIssue(issue.id)}
@@ -787,8 +792,63 @@ export function CodeReviewPanel({ review, prUrl, prToken, mrData, previousReview
             </div>
           )}
 
+          {/* Inline token input when URL exists but no token */}
+          {prUrl && !hasToken && selectedCount > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="sticky bottom-4 mt-4 p-3 rounded-2xl bg-card border border-yellow-300/40 dark:border-yellow-500/20 shadow-lg"
+            >
+              <div className="flex items-center gap-2 mb-2 text-sm">
+                <ListChecks size={16} className="text-primary" />
+                <span className="font-medium text-foreground">{selectedCount} issue{selectedCount !== 1 ? "s" : ""} selected</span>
+                <span className="text-xs text-muted-foreground">— enter a token to post to the {mrData?.platform === "gitlab" ? "MR" : "PR"}</span>
+              </div>
+              <form
+                className="flex items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (localToken.trim()) {
+                    onTokenChange?.(localToken.trim());
+                    toast.success("Token saved — you can now post comments");
+                  }
+                }}
+              >
+                <div className="relative flex-1">
+                  <Key size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="password"
+                    value={localToken}
+                    onChange={(e) => setLocalToken(e.target.value)}
+                    placeholder={mrData?.platform === "gitlab" ? "glpat-xxxx" : "ghp_xxxx"}
+                    className="w-full pl-9 pr-3 py-2 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all placeholder:text-muted-foreground/50 text-foreground"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={!localToken.trim()}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-background bg-primary hover:bg-primary/90 px-4 py-2 rounded-lg transition-all active:scale-95 disabled:opacity-50"
+                >
+                  <Send size={13} />
+                  Enable Posting
+                </button>
+                <button
+                  type="button"
+                  onClick={deselectAll}
+                  className="text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg border border-border transition-colors"
+                >
+                  Clear
+                </button>
+              </form>
+              <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+                <Shield size={11} />
+                Token is used only for this session and never stored
+              </p>
+            </motion.div>
+          )}
+
           {/* Post Selected floating bar */}
-          {selectedCount > 0 && prUrl && prToken && (
+          {selectedCount > 0 && canPost && (
             <motion.div
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}

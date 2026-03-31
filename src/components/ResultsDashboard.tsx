@@ -25,6 +25,7 @@ interface ResultsDashboardProps {
   prUrl?: string;
   prToken?: string;
   onNotesChange?: (notes: string) => void;
+  onTokenChange?: (token: string) => void;
 }
 
 const TABS = [
@@ -33,7 +34,7 @@ const TABS = [
   { id: "review" as const, label: "Code Review", icon: Search, description: "Senior engineer insights" },
 ];
 
-export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, onTriggerReview, prUrl, prToken, onNotesChange }: ResultsDashboardProps) {
+export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, onTriggerReview, prUrl, prToken, onNotesChange, onTokenChange }: ResultsDashboardProps) {
   const { mrData, summary, executionFlow, codeReview, activeTab } = state;
   const [notesOpen, setNotesOpen] = useState(false);
   const [notesValue, setNotesValue] = useState(state.reviewerNotes ?? "");
@@ -358,7 +359,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
           <FlowSkeleton />
         )}
         {activeTab === "review" && codeReview && (
-          <CodeReviewPanel review={codeReview} prUrl={prUrl} prToken={prToken} mrData={mrData} previousReview={state.previousReview} reviewLoading={reviewLoading} onTriggerReview={onTriggerReview} />
+          <CodeReviewPanel review={codeReview} prUrl={prUrl} prToken={prToken} mrData={mrData} previousReview={state.previousReview} reviewLoading={reviewLoading} onTriggerReview={onTriggerReview} onTokenChange={onTokenChange} />
         )}
         {activeTab === "review" && !codeReview && !reviewLoading && (
           <motion.div

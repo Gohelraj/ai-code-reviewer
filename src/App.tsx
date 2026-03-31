@@ -107,6 +107,10 @@ function App() {
     });
   }, [updateState, analysisUrl, activeAIConfig]);
 
+  const handleTokenChange = useCallback((token: string) => {
+    setAnalysisToken(token);
+  }, []);
+
   const handleTriggerReview = useCallback(async () => {
     if (!state.mrData || !activeAIConfig || reviewLoading) return;
     setReviewLoading(true);
@@ -159,6 +163,7 @@ function App() {
           prUrl={analysisUrl}
           prToken={analysisToken}
           onNotesChange={handleNotesChange}
+          onTokenChange={handleTokenChange}
         />
       );
     }
@@ -190,6 +195,7 @@ function App() {
       prUrl={analysisUrl}
       prToken={analysisToken}
       onNotesChange={handleNotesChange}
+      onTokenChange={handleTokenChange}
     />
   );
 }
