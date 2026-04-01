@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { GitPullRequest, Key, ChevronDown, ChevronUp, Sparkles, GitBranch, ArrowRight, Shield, FileText, Search, Layers, Clock, Trash2, ListChecks, Cpu, CheckCircle2 } from "lucide-react";
+import { GitPullRequest, Key, ChevronDown, ChevronUp, Sparkles, GitBranch, ArrowRight, Shield, FileText, Search, Layers, Clock, Trash2, ListChecks, Cpu, CheckCircle2, BookOpenText } from "lucide-react";
 import { AISettings, loadAIConfig, resolveAIConfigForRepo } from "./AISettings";
 import type { AIConfig } from "./AISettings";
+import { RepoContextSettings } from "./RepoContextSettings";
 import { ThemeToggle } from "./ThemeToggle";
 import { getHistory, deleteAnalysis } from "../lib/history";
 import type { HistoryEntry } from "../lib/history";
@@ -36,6 +37,7 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [showAISettings, setShowAISettings] = useState(false);
+  const [showRepoContext, setShowRepoContext] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [showIssue, setShowIssue] = useState(false);
   const [rememberToken, setRememberToken] = useState(false);
@@ -87,7 +89,7 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
   const isValidUrl = url.includes("github.com") || url.includes("gitlab.com");
   const platformLabel = url.includes("gitlab.com") ? "GitLab" : url.includes("github.com") ? "GitHub" : "GitHub or GitLab";
   const needsApiKey = !aiConfig.apiKey.trim();
-  const hasOptionalSetup = showAISettings || showToken || showIssue;
+  const hasOptionalSetup = showAISettings || showRepoContext || showToken || showIssue;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -189,7 +191,7 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
                   </div>
                 </div>
 
-                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
                   <button
                     type="button"
                     onClick={() => setShowAISettings((open) => !open)}
@@ -204,6 +206,23 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {needsApiKey ? "Add your OpenRouter key and choose a model." : "Using saved model and API key."}
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowRepoContext((open) => !open)}
+                    className={`rounded-xl border px-4 py-3 text-left transition-all ${showRepoContext ? "border-foreground/20 bg-card" : "border-border bg-background hover:border-foreground/20"}`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <BookOpenText size={15} className="text-muted-foreground" />
+                        <span className="text-sm font-medium text-foreground">Repo Context</span>
+                      </div>
+                      {showRepoContext ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Stable repo purpose, patterns, and review guidance.
                     </p>
                   </button>
 
@@ -258,6 +277,16 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
                           </p>
                         </div>
                         <AISettings config={aiConfig} onChange={setAiConfig} disabled={isLoading} repoKey={repoKey} />
+                      </motion.div>
+                    )}
+
+                    {showRepoContext && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        <RepoContextSettings config={aiConfig} onChange={setAiConfig} disabled={isLoading} />
                       </motion.div>
                     )}
 

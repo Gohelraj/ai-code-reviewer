@@ -769,6 +769,10 @@ For each issue:
 - set confidence to low, medium, or high based on how strongly the evidence supports the finding
 - set rationale to 1-2 sentences explaining why the finding matters in this specific PR
 - set fixable to true when a concrete code-level fix can be proposed from the provided context${
+  aiConfig.repoMemory?.trim()
+    ? "\n- treat REPOSITORY REVIEW MEMORY as high-priority context about intentional patterns, business rules, and what should or should not be flagged for this repo"
+    : ""
+}${
   reviewMode === "quick"
     ? "\n- in quick mode, prioritize only high-confidence critical and warning issues unless a suggestion is unusually important"
     : ""
@@ -784,7 +788,17 @@ Author: ${pr.author}
 Branch: ${pr.headBranch} → ${pr.baseBranch}
 Stats: ${pr.changedFiles} files changed, +${pr.additions}/-${pr.deletions}
 
-FILE CONTEXT + DIFFS:
+${aiConfig.repoMemory?.trim()
+  ? `REPOSITORY REVIEW MEMORY:
+${aiConfig.repoMemory.trim()}
+
+`
+  : ""}${aiConfig.customRules?.trim()
+  ? `TEAM REVIEW RULES:
+${aiConfig.customRules.trim()}
+
+`
+  : ""}FILE CONTEXT + DIFFS:
 ${diffContent}
 
 Perform a comprehensive senior-level code review using the full file context above.`;

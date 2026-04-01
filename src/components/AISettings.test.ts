@@ -59,11 +59,13 @@ describe("AISettings storage helpers", () => {
     saveRepoDefaults("github:acme/repo", {
       defaultTab: "review",
       postingMode: "general",
+      repoMemory: "Payments service. Prioritize idempotency.",
     });
 
     expect(loadRepoDefaults("github:acme/repo")).toEqual({
       defaultTab: "review",
       postingMode: "general",
+      repoMemory: "Payments service. Prioritize idempotency.",
     });
   });
 
@@ -77,6 +79,7 @@ describe("AISettings storage helpers", () => {
       model: "openai/gpt-5.4",
       auxiliaryModel: "openai/gpt-5.4-mini",
       customRules: "Focus on auth and secrets.",
+      repoMemory: "",
       postingMode: "general",
       lastPresetId: "preset-security",
     });

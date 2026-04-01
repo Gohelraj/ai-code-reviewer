@@ -15,6 +15,7 @@ import type { AIConfig, ReviewMode } from "./AISettings";
 import { OPENROUTER_MODELS } from "./AISettings";
 import { ThemeToggle } from "./ThemeToggle";
 import { AISettings } from "./AISettings";
+import { RepoContextSettings } from "./RepoContextSettings";
 import { exportAsMarkdown, downloadMarkdown, exportAsJSON, downloadJSON } from "../lib/export";
 import { estimateAnalysisCost, formatCost } from "../lib/cost";
 import { getHistory } from "../lib/history";
@@ -561,7 +562,10 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
               </button>
             </div>
             <div className="max-h-[60vh] overflow-y-auto p-5">
-              <AISettings config={localAIConfig} onChange={setLocalAIConfig} repoKey={repoKey} />
+              <div className="space-y-4">
+                <RepoContextSettings config={localAIConfig} onChange={setLocalAIConfig} />
+                <AISettings config={localAIConfig} onChange={setLocalAIConfig} repoKey={repoKey} />
+              </div>
             </div>
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-border bg-secondary/30">
               <p className="text-xs text-muted-foreground leading-relaxed">

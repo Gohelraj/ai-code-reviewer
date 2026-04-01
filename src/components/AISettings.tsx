@@ -25,6 +25,7 @@ export interface AIConfig {
   model: string;
   auxiliaryModel?: string;
   customRules?: string;
+  repoMemory?: string;
   postingMode?: PostingMode;
   analysisStartMode?: AnalysisStartMode;
   reviewMode?: ReviewMode;
@@ -113,6 +114,7 @@ const DEFAULT_CONFIG: AIConfig = {
   model: DEFAULT_PRIMARY_MODEL,
   auxiliaryModel: "",
   customRules: "",
+  repoMemory: "",
   postingMode: DEFAULT_POSTING_MODE,
   analysisStartMode: DEFAULT_ANALYSIS_START_MODE,
   reviewMode: DEFAULT_REVIEW_MODE,
@@ -128,6 +130,7 @@ interface RepoDefaults {
   model?: string;
   auxiliaryModel?: string;
   customRules?: string;
+  repoMemory?: string;
   postingMode?: PostingMode;
   analysisStartMode?: AnalysisStartMode;
   reviewMode?: ReviewMode;
@@ -208,6 +211,7 @@ export function resolveAIConfigForRepo(baseConfig: AIConfig, repoKey?: string | 
       model: preset.model,
       auxiliaryModel: preset.auxiliaryModel ?? sanitizedBaseConfig.auxiliaryModel ?? "",
       customRules: preset.customRules,
+      repoMemory: defaults.repoMemory ?? sanitizedBaseConfig.repoMemory,
       postingMode: preset.postingMode ?? defaults.postingMode ?? sanitizedBaseConfig.postingMode ?? DEFAULT_POSTING_MODE,
       analysisStartMode: preset.analysisStartMode ?? defaults.analysisStartMode ?? sanitizedBaseConfig.analysisStartMode ?? DEFAULT_ANALYSIS_START_MODE,
       reviewMode: preset.reviewMode ?? defaults.reviewMode ?? sanitizedBaseConfig.reviewMode ?? DEFAULT_REVIEW_MODE,
@@ -221,6 +225,7 @@ export function resolveAIConfigForRepo(baseConfig: AIConfig, repoKey?: string | 
     model: defaults.model ?? sanitizedBaseConfig.model,
     auxiliaryModel: defaults.auxiliaryModel ?? sanitizedBaseConfig.auxiliaryModel ?? "",
     customRules: defaults.customRules ?? sanitizedBaseConfig.customRules,
+    repoMemory: defaults.repoMemory ?? sanitizedBaseConfig.repoMemory,
     postingMode: defaults.postingMode ?? sanitizedBaseConfig.postingMode ?? DEFAULT_POSTING_MODE,
     analysisStartMode: defaults.analysisStartMode ?? sanitizedBaseConfig.analysisStartMode ?? DEFAULT_ANALYSIS_START_MODE,
     reviewMode: defaults.reviewMode ?? sanitizedBaseConfig.reviewMode ?? DEFAULT_REVIEW_MODE,
@@ -262,6 +267,7 @@ export function AISettings({ config, onChange, disabled, repoKey }: AISettingsPr
         model: config.model,
         auxiliaryModel: config.auxiliaryModel ?? "",
         customRules: config.customRules ?? "",
+        repoMemory: config.repoMemory ?? "",
         postingMode: config.postingMode ?? "inline",
         analysisStartMode: config.analysisStartMode ?? "summary-and-flow",
         reviewMode: config.reviewMode ?? "deep",

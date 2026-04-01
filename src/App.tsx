@@ -237,6 +237,7 @@ function App() {
         model: normalizedConfig.model,
         auxiliaryModel: normalizedConfig.auxiliaryModel ?? "",
         customRules: normalizedConfig.customRules ?? "",
+        repoMemory: normalizedConfig.repoMemory ?? "",
         postingMode: normalizedConfig.postingMode ?? "inline",
         analysisStartMode: normalizedConfig.analysisStartMode ?? "summary-and-flow",
         reviewMode: normalizedConfig.reviewMode ?? "deep",
