@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { GitPullRequest, Key, ChevronDown, ChevronUp, Sparkles, GitBranch, ArrowRight, Shield, FileText, Search, Layers, Clock, Trash2, ListChecks } from "lucide-react";
+import { GitPullRequest, Key, ChevronDown, ChevronUp, Sparkles, GitBranch, ArrowRight, Shield, FileText, Search, Layers, Clock, Trash2, ListChecks, Cpu, CheckCircle2 } from "lucide-react";
 import { AISettings, loadAIConfig, resolveAIConfigForRepo } from "./AISettings";
 import type { AIConfig } from "./AISettings";
 import { ThemeToggle } from "./ThemeToggle";
@@ -34,7 +34,9 @@ const EXAMPLE_URLS = [
 export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHistory }: InputFormProps) {
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
+  const [showAISettings, setShowAISettings] = useState(false);
   const [showToken, setShowToken] = useState(false);
+  const [showIssue, setShowIssue] = useState(false);
   const [rememberToken, setRememberToken] = useState(false);
   const [hasSavedToken, setHasSavedToken] = useState(false);
   const [issueUrl, setIssueUrl] = useState("");
@@ -64,6 +66,12 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
     setHasSavedToken(false);
   }, [repoKey]);
 
+  useEffect(() => {
+    if (!aiConfig.apiKey.trim()) {
+      setShowAISettings(true);
+    }
+  }, [aiConfig.apiKey]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!url.trim()) return;
@@ -76,6 +84,9 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
   };
 
   const isValidUrl = url.includes("github.com") || url.includes("gitlab.com");
+  const platformLabel = url.includes("gitlab.com") ? "GitLab" : url.includes("github.com") ? "GitHub" : "GitHub or GitLab";
+  const needsApiKey = !aiConfig.apiKey.trim();
+  const hasOptionalSetup = showAISettings || showToken || showIssue;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -114,14 +125,14 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
           </div>
 
           <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-center text-foreground mb-4 leading-tight tracking-tight">
-            Review merge requests
+            Start with the PR or MR
             <br />
-            <span style={{ color: "hsl(142 71% 45%)" }}>10× faster</span> with AI
+            <span style={{ color: "hsl(142 71% 45%)" }}>then add details only if you need them</span>
           </h1>
 
           <p className="text-center text-muted-foreground text-lg mb-12 leading-relaxed">
-            Paste a GitHub PR or GitLab MR link. Get instant change summaries,
-            logical execution flow, and a detailed senior-level code review.
+            Paste a GitHub PR or GitLab MR link to begin. Tokens, requirement checks,
+            and AI customization are available as guided setup instead of upfront clutter.
           </p>
 
           {/* Form card */}
@@ -153,107 +164,199 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
                     Please enter a valid GitHub or GitLab URL
                   </p>
                 )}
-              </div>
-
-              {/* Optional token */}
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setShowToken(!showToken)}
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <Key size={12} />
-                  <span>Access token (for private repos)</span>
-                  {showToken ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                </button>
-
-                {showToken && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="mt-2"
-                  >
-                    <div className="relative">
-                      <Shield size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                      <input
-                        type="password"
-                        value={token}
-                        onChange={(e) => setToken(e.target.value)}
-                        placeholder="ghp_xxxx or glpat-xxxx"
-                        className="w-full pl-10 pr-4 py-2.5 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all placeholder:text-muted-foreground/60 text-foreground"
-                        disabled={isLoading}
-                      />
-                    </div>
-                    <label className="mt-2 flex items-start gap-2 text-xs text-muted-foreground">
-                      <input
-                        type="checkbox"
-                        checked={rememberToken}
-                        onChange={(e) => setRememberToken(e.target.checked)}
-                        className="mt-0.5 rounded border-border bg-background"
-                        disabled={isLoading}
-                      />
-                      <span>
-                        Remember on this device for this repo. If unchecked, the token is saved only for this browser session.
-                      </span>
-                    </label>
-                    <div className="mt-2 flex items-center justify-between gap-3">
-                      <p className="text-xs text-muted-foreground flex items-center gap-1">
-                        <Shield size={11} />
-                        {rememberToken
-                          ? "Stored in this browser until you clear it. Avoid using this on shared devices."
-                          : "Stored only until this browser session ends."}
-                      </p>
-                      {hasSavedToken && repoKey && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            clearStoredRepoToken(repoKey);
-                            setToken("");
-                            setRememberToken(false);
-                            setHasSavedToken(false);
-                          }}
-                          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                          Forget saved token
-                        </button>
-                      )}
-                    </div>
-                  </motion.div>
+                {isValidUrl && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-1">
+                      <CheckCircle2 size={12} className="text-accent" />
+                      {platformLabel} link detected
+                    </span>
+                    <span>Next: use recommended AI settings or open guided setup below.</span>
+                  </div>
                 )}
               </div>
 
-              {/* AI Settings */}
-              <AISettings config={aiConfig} onChange={setAiConfig} disabled={isLoading} repoKey={repoKey} />
-
-              {/* Linked Issue (optional — always visible) */}
-              <div>
-                <label className="text-sm font-medium text-foreground mb-1.5 block flex items-center gap-1.5">
-                  <ListChecks size={14} className="text-muted-foreground" />
-                  Linked Issue
-                  <span className="text-xs text-muted-foreground font-normal">(optional)</span>
-                </label>
-                <div className="relative">
-                  <ListChecks size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    type="url"
-                    value={issueUrl}
-                    onChange={(e) => setIssueUrl(e.target.value)}
-                    placeholder="https://gitlab.com/group/project/-/issues/123"
-                    className="w-full pl-10 pr-4 py-2.5 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all placeholder:text-muted-foreground/60 text-foreground"
-                    disabled={isLoading}
-                  />
+              <div className="rounded-2xl border border-border bg-secondary/40 p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Guided setup</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Start simple. Open only the setup sections you need for this review.
+                    </p>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {needsApiKey ? "AI settings required before first analysis" : "Recommended AI settings ready"}
+                  </div>
                 </div>
-                <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
-                  Paste a GitHub issue or GitLab issue/work item URL. AI will cross-check if the MR fulfills all requirements.
-                  Requirements check and MR description review are run on-demand to save API costs.
-                </p>
+
+                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowAISettings((open) => !open)}
+                    className={`rounded-xl border px-4 py-3 text-left transition-all ${showAISettings ? "border-foreground/20 bg-card" : "border-border bg-background hover:border-foreground/20"} ${needsApiKey ? "ring-1 ring-accent/20" : ""}`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <Cpu size={15} className={needsApiKey ? "text-accent" : "text-muted-foreground"} />
+                        <span className="text-sm font-medium text-foreground">AI Settings</span>
+                      </div>
+                      {showAISettings ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {needsApiKey ? "Add your OpenRouter key and choose a model." : "Using saved model and API key."}
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowToken((open) => !open)}
+                    className={`rounded-xl border px-4 py-3 text-left transition-all ${showToken ? "border-foreground/20 bg-card" : "border-border bg-background hover:border-foreground/20"}`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <Key size={15} className="text-muted-foreground" />
+                        <span className="text-sm font-medium text-foreground">Access Token</span>
+                      </div>
+                      {showToken ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Private repos and comment posting.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowIssue((open) => !open)}
+                    className={`rounded-xl border px-4 py-3 text-left transition-all ${showIssue ? "border-foreground/20 bg-card" : "border-border bg-background hover:border-foreground/20"}`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <ListChecks size={15} className="text-muted-foreground" />
+                        <span className="text-sm font-medium text-foreground">Linked Issue</span>
+                      </div>
+                      {showIssue ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Optional requirement coverage checks.
+                    </p>
+                  </button>
+                </div>
+
+                {hasOptionalSetup && (
+                  <div className="mt-4 space-y-4">
+                    {showAISettings && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        transition={{ duration: 0.2 }}
+                        className="rounded-xl border border-border bg-card p-4"
+                      >
+                        <div className="mb-3">
+                          <p className="text-sm font-semibold text-foreground">AI setup</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Required. Your OpenRouter key stays in this browser, and most users can keep the recommended defaults.
+                          </p>
+                        </div>
+                        <AISettings config={aiConfig} onChange={setAiConfig} disabled={isLoading} repoKey={repoKey} />
+                      </motion.div>
+                    )}
+
+                    {showToken && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        transition={{ duration: 0.2 }}
+                        className="rounded-xl border border-border bg-card p-4"
+                      >
+                        <div className="mb-3">
+                          <p className="text-sm font-semibold text-foreground">Access token</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Optional. Add a token for private {platformLabel} repos or if you want to post review comments back later.
+                          </p>
+                        </div>
+                        <div className="relative">
+                          <Shield size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                          <input
+                            type="password"
+                            value={token}
+                            onChange={(e) => setToken(e.target.value)}
+                            placeholder="ghp_xxxx or glpat-xxxx"
+                            className="w-full pl-10 pr-4 py-2.5 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all placeholder:text-muted-foreground/60 text-foreground"
+                            disabled={isLoading}
+                          />
+                        </div>
+                        <label className="mt-2 flex items-start gap-2 text-xs text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            checked={rememberToken}
+                            onChange={(e) => setRememberToken(e.target.checked)}
+                            className="mt-0.5 rounded border-border bg-background"
+                            disabled={isLoading}
+                          />
+                          <span>
+                            Remember on this device for this repo. If unchecked, the token is saved only for this browser session.
+                          </span>
+                        </label>
+                        <div className="mt-2 flex items-center justify-between gap-3">
+                          <p className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Shield size={11} />
+                            {rememberToken
+                              ? "Stored in this browser until you clear it. Avoid using this on shared devices."
+                              : "Stored only until this browser session ends."}
+                          </p>
+                          {hasSavedToken && repoKey && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                clearStoredRepoToken(repoKey);
+                                setToken("");
+                                setRememberToken(false);
+                                setHasSavedToken(false);
+                              }}
+                              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                              Forget saved token
+                            </button>
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {showIssue && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        transition={{ duration: 0.2 }}
+                        className="rounded-xl border border-border bg-card p-4"
+                      >
+                        <div className="mb-3">
+                          <p className="text-sm font-semibold text-foreground">Linked issue</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Optional. Add a GitHub issue or GitLab issue/work item to run requirement coverage checks after analysis.
+                          </p>
+                        </div>
+                        <div className="relative">
+                          <ListChecks size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                          <input
+                            type="url"
+                            value={issueUrl}
+                            onChange={(e) => setIssueUrl(e.target.value)}
+                            placeholder="https://gitlab.com/group/project/-/issues/123"
+                            className="w-full pl-10 pr-4 py-2.5 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all placeholder:text-muted-foreground/60 text-foreground"
+                            disabled={isLoading}
+                          />
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+                          Requirements check and MR description review are run on demand, so adding an issue here does not increase the initial analysis cost.
+                        </p>
+                      </motion.div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <button
                 type="submit"
-                disabled={isLoading || !url.trim() || !isValidUrl}
+                disabled={isLoading || !url.trim() || !isValidUrl || !aiConfig.apiKey.trim()}
                 className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-foreground text-background text-sm font-semibold rounded-xl hover:bg-foreground/90 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
               >
                 {isLoading ? (
@@ -264,11 +367,15 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
                 ) : (
                   <>
                     <Sparkles size={15} />
-                    <span>Analyze with AI</span>
+                    <span>{needsApiKey ? "Continue to Analysis" : "Analyze with AI"}</span>
                     <ArrowRight size={15} />
                   </>
                 )}
               </button>
+
+              <p className="text-center text-xs text-muted-foreground">
+                The fastest path is: paste a URL, add your OpenRouter key once, then keep the recommended setup. Tokens and linked issues are optional.
+              </p>
             </form>
           </motion.div>
 

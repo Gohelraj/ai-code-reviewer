@@ -747,7 +747,6 @@ export async function analyzeCodeReview(mrData: MRData, aiConfig: AIConfig, toke
   if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required. Please configure it in AI Settings.");
 
   const hasFullContent = files.some((f) => f.fullContent);
-  const reviewerSuggestionsPromise = fetchReviewerSuggestions(hydrated, token);
   const systemPrompt = `You are a very senior software engineer (10+ years) performing a ${reviewMode === "quick" ? "fast, high-signal" : "thorough, context-aware"} code review.
 
 For each changed file you receive:
@@ -802,7 +801,7 @@ Perform a comprehensive senior-level code review using the full file context abo
 
   review.testGapSummary = computeTestGapSummary(files);
   review.riskHotspots = computeRiskHotspots(files, review.issues, review.testGapSummary);
-  review.reviewerSuggestions = await reviewerSuggestionsPromise;
+  review.reviewerSuggestions = [];
 
   return review;
 }
