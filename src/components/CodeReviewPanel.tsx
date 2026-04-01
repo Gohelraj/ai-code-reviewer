@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import {
   Shield, Zap, CheckCircle2, XCircle, AlertTriangle, MessageSquare,
@@ -707,6 +707,42 @@ function EditBeforePostModal({
   );
 }
 
+function CollapsibleInfoSection({
+  title,
+  itemCount,
+  children,
+}: {
+  title: string;
+  itemCount: number;
+  children: ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
+      <button
+        type="button"
+        onClick={() => setExpanded((current) => !current)}
+        aria-expanded={expanded}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {itemCount} item{itemCount === 1 ? "" : "s"} hidden by default
+          </p>
+        </div>
+        {expanded ? (
+          <ChevronUp size={14} className="text-muted-foreground flex-shrink-0" />
+        ) : (
+          <ChevronDown size={14} className="text-muted-foreground flex-shrink-0" />
+        )}
+      </button>
+      {expanded && <div className="mt-3">{children}</div>}
+    </div>
+  );
+}
+
 export function CodeReviewPanel({
   review,
   prUrl,
@@ -1325,8 +1361,7 @@ export function CodeReviewPanel({
           )}
 
           {review.contextInsights && review.contextInsights.length > 0 && (
-            <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
-              <h3 className="text-sm font-semibold text-foreground mb-3">Related Context Retrieved</h3>
+            <CollapsibleInfoSection title="Related Context Retrieved" itemCount={review.contextInsights.length}>
               <div className="space-y-2">
                 {review.contextInsights.map((insight) => (
                   <button
@@ -1349,12 +1384,11 @@ export function CodeReviewPanel({
                   </button>
                 ))}
               </div>
-            </div>
+            </CollapsibleInfoSection>
           )}
 
           {review.riskHotspots.length > 0 && (
-            <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
-              <h3 className="text-sm font-semibold text-foreground mb-3">Risk Hotspots</h3>
+            <CollapsibleInfoSection title="Risk Hotspots" itemCount={review.riskHotspots.length}>
               <div className="space-y-2">
                 {review.riskHotspots.map((hotspot) => (
                   <button
@@ -1370,7 +1404,7 @@ export function CodeReviewPanel({
                   </button>
                 ))}
               </div>
-            </div>
+            </CollapsibleInfoSection>
           )}
 
           {review.reviewerSuggestions && review.reviewerSuggestions.length > 0 && (

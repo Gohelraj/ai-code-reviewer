@@ -152,9 +152,14 @@ describe("CodeReviewPanel", () => {
     expect(screen.getByText("Auth checks are missing on a public entry point.")).toBeInTheDocument();
     expect(screen.getByText("Test Gap Signal")).toBeInTheDocument();
     expect(screen.getByText("Verification Summary")).toBeInTheDocument();
-    expect(screen.getByText("Related Context Retrieved")).toBeInTheDocument();
-    expect(screen.getByText("The new handler path returns before checking req.user.")).toBeInTheDocument();
-    expect(screen.getByText("Risk Hotspots")).toBeInTheDocument();
+    const relatedContextToggle = screen.getByRole("button", { name: /Related Context Retrieved/i });
+    expect(relatedContextToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Imported by src/auth.ts and still calls the unguarded handler.")).not.toBeInTheDocument();
+    expect(screen.queryByText("router.get('/account', authHandler);")).not.toBeInTheDocument();
+
+    const riskHotspotsToggle = screen.getByRole("button", { name: /Risk Hotspots/i });
+    expect(riskHotspotsToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: /risk 82/i })).not.toBeInTheDocument();
     expect(screen.getByText("Suggested Reviewers")).toBeInTheDocument();
     expect(screen.getByText("Merge Readiness Gates")).toBeInTheDocument();
     expect(screen.getByText("Requirements coverage")).toBeInTheDocument();
@@ -162,7 +167,12 @@ describe("CodeReviewPanel", () => {
     expect(screen.getByText("Comparison vs Last Saved Review")).toBeInTheDocument();
     expect(screen.getByText(/2 new commits detected since the last saved review/i)).toBeInTheDocument();
 
-    const hotspotsSection = screen.getByText("Risk Hotspots").closest("div");
+    await user.click(relatedContextToggle);
+    expect(screen.getByText("Imported by src/auth.ts and still calls the unguarded handler.")).toBeInTheDocument();
+    expect(screen.getByText("router.get('/account', authHandler);")).toBeInTheDocument();
+
+    await user.click(riskHotspotsToggle);
+    const hotspotsSection = riskHotspotsToggle.closest("div");
     const hotspotButton = within(hotspotsSection as HTMLElement).getByRole("button", { name: /risk 82/i });
     await user.click(hotspotButton);
     expect(onSelectedFileChange).toHaveBeenCalledWith("src/auth.ts");
