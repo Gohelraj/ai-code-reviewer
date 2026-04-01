@@ -3,181 +3,146 @@
 ## Snapshot
 
 - Project: `ai-code-reviewer`
-- Type: self-hosted AI code review web app
-- Primary purpose: analyze GitHub pull requests and GitLab merge requests, then generate:
-  - change summaries
-  - execution-flow views
-  - senior-style code reviews
-  - requirements coverage checks against linked issues
-  - MR/PR description quality reviews
-- Frontend: React + TypeScript + Vite
-- Backend: small Express server used only for static hosting and GitLab proxying
+- Type: browser-first AI code review workspace
+- Primary use case: analyze GitHub pull requests and GitLab merge requests from a pasted URL
+- Core outputs:
+  - change summary
+  - execution flow analysis
+  - code review with findings and trust signals
+  - linked issue requirements coverage
+  - MR description review
+- Frontend: React 19 + TypeScript + Vite 7
+- Styling: Tailwind CSS, CSS variables, Framer Motion
+- Backend: minimal Express server for static hosting and GitLab proxying
 - AI provider: OpenRouter, called directly from the browser
+- Persistence: localStorage + IndexedDB only
 
-## What The App Actually Does
+## Product Model
 
-The user pastes a GitHub PR URL or GitLab MR URL into the landing form. The app fetches diff metadata plus file context, then runs AI analysis in stages:
+This app is intentionally client-heavy and BYOK.
 
-1. Fetch MR/PR metadata and changed files.
-2. Optionally fetch a linked GitHub or GitLab issue.
-3. Run summary analysis and execution-flow analysis in parallel.
-4. Let the user manually trigger:
-   - code review
-   - requirements check
-   - MR description review
-5. Allow export/copy/posting workflows from the results UI.
+- Users paste a GitHub PR URL or GitLab MR URL.
+- The app fetches metadata plus changed-file diffs.
+- Summary and execution-flow analysis can run automatically after fetch.
+- Code review, requirements check, and MR description review are user-triggered follow-up actions.
+- OpenRouter API calls are made directly from the browser using the user-supplied key.
+- GitLab API calls go through `/api/gitlab` because GitLab does not expose permissive CORS headers.
 
-The app is intentionally BYOK: the OpenRouter API key is entered in the UI and sent from the browser to OpenRouter.
+There is no real application backend for auth, shared state, or server-side AI orchestration.
 
 ## Runtime Architecture
 
 ### Frontend responsibilities
 
-- Fetch GitHub PRs directly from GitHub REST APIs.
-- Fetch GitLab MRs and issues through `/api/gitlab` because GitLab CORS is blocked.
-- Call OpenRouter directly from the browser using strict JSON-schema responses.
-- Render all review surfaces and posting tools.
-- Persist local user state in browser storage.
+- Parse GitHub/GitLab PR and issue URLs.
+- Fetch GitHub data directly from GitHub REST APIs.
+- Fetch GitLab MR and issue data through the local/prod proxy.
+- Build structured AI prompts and JSON-schema responses.
+- Render the review workflow UI and diff experience.
+- Persist local settings, repo defaults, and history.
 
 ### Backend responsibilities
 
-`server.js` is minimal:
+`server.js` only:
 
-- serves the built `dist/` directory
+- serves `dist/`
 - proxies `/api/gitlab/*` to `https://gitlab.com/*`
-- provides SPA fallback to `dist/index.html`
-
-There is no real application backend, database, auth service, or server-side AI pipeline.
+- serves `index.html` as the SPA fallback
 
 ## Main Source Layout
 
 ### Entrypoints
 
-- `index.html`: boots the app through `/src/main.tsx`
-- `src/main.tsx`: React root, React Query provider, toast provider
-- `src/App.tsx`: top-level state machine and orchestration
+- `index.html`: Vite entry HTML
+- `src/main.tsx`: React root, React Query provider, toaster, app bootstrap
+- `src/App.tsx`: top-level orchestration and app state machine
 - `server.js`: production Express server
-- `vite.config.ts`: Vite config, alias `@ -> src`, dev GitLab proxy, fixed port `3000`
+- `vite.config.ts`: Vite config, aliasing, dev proxy, port config
 
-### Core UI components
+### Core UI
 
 - `src/components/InputForm.tsx`
-  - landing page
   - PR/MR URL input
-  - optional repo token input
-  - optional linked issue input
-  - AI settings panel
-  - recent review history
+  - optional token and linked issue input
+  - AI settings entry point
+  - recent history access
 - `src/components/ResultsDashboard.tsx`
-  - top-level post-analysis workspace
-  - keyboard shortcuts
-  - export/copy/history modal/model-settings modal
-  - tab routing between summary/flow/review/requirements/MR-description
+  - main post-analysis workspace
+  - tab routing
+  - history, export, AI settings, keyboard shortcuts
 - `src/components/NavigationSidebar.tsx`
-  - left nav with progress tracking
-  - inline changed-file tree
-  - notes area
-  - export and print actions
+  - tab navigation
+  - file tree
+  - notes and export actions
 - `src/components/ChangeSummaryPanel.tsx`
-  - summary cards + changed-file diffs
+  - summary output and diff browsing
 - `src/components/ExecutionFlowPanel.tsx`
-  - layer-based execution flow
-  - list and diagram view
+  - execution flow view
 - `src/components/FlowDiagram.tsx`
-  - React Flow + dagre auto-layout diagram
+  - diagram rendering using React Flow + dagre
 - `src/components/CodeReviewPanel.tsx`
-  - score/verdict/issues display
-  - issue filtering/grouping
-  - dismiss/select/edit issue comments
-  - inline/general comment posting to GitHub/GitLab
+  - findings UI, filtering, selection, posting, fix generation surface
 - `src/components/RequirementsPanel.tsx`
-  - requirement coverage score
-  - fulfilled/partial/missing requirement breakdown
+  - linked issue requirement coverage analysis
 - `src/components/MRDescriptionPanel.tsx`
-  - MR description quality score
-  - suggestions and generated replacement description
+  - description quality review and rewrite suggestions
 - `src/components/DiffViewer.tsx`
-  - inline/split diff viewer
-  - custom patch parsing
-  - Shiki highlighting
-  - collapsible unchanged sections
+  - inline and split diff viewing with syntax highlighting
 
-### Utility/libs
+### Libraries / utilities
 
 - `src/lib/api.ts`
-  - URL parsing for GitHub/GitLab PRs and issues
-  - diff fetching
-  - full file-content fetching for context-aware review
-  - OpenRouter request builder
-  - JSON schemas for all AI outputs
-  - analysis prompt construction
+  - GitHub/GitLab fetch logic
+  - OpenRouter requests
+  - schema definitions
+  - prompt construction
+  - review-context preparation
 - `src/lib/github-comment.ts`
-  - posts general comments
-  - posts inline GitHub review comments
-  - posts GitLab discussions with `diff_refs`
-  - falls back to general comments when inline positioning fails
+  - GitHub/GitLab comment posting logic
+- `src/lib/review-utils.ts`
+  - review diffing, repo keying, UI state helpers, hotspot/test-gap helpers
+- `src/lib/codeowners.ts`
+  - CODEOWNERS parsing and reviewer suggestion helpers
 - `src/lib/history.ts`
-  - IndexedDB persistence of past analyses
+  - IndexedDB persistence for prior analyses
 - `src/lib/export.ts`
-  - markdown export
-  - JSON export
-- `src/lib/cost.ts`
-  - rough token/cost estimates by model
+  - markdown and JSON exports
 - `src/lib/highlighter.ts`
-  - singleton Shiki highlighter
+  - Shiki highlighter lifecycle
+- `src/lib/cost.ts`
+  - model cost estimation
 - `src/lib/useDarkMode.ts`
-  - theme persistence and system-theme sync
+  - theme persistence and system sync
 - `src/lib/utils.ts`
-  - `cn()` helper using `clsx` + `tailwind-merge`
+  - utility helpers such as `cn()`
 
 ### Shared types
 
-`src/types.ts` defines the full app data contract:
+`src/types.ts` is the main contract for fetched MR/PR data and AI outputs, including:
 
-- `MRData`, `PRInfo`, `FileDiff`, `DiffRefs`
+- `MRData`
+- `PRInfo`
+- `FileDiff`
+- `DiffRefs`
 - `ChangeSummary`
 - `ExecutionFlow`
-- `CodeReview`, `ReviewIssue`
+- `CodeReview`
+- `ReviewIssue`
 - `RequirementsCheck`
 - `MRDescriptionReview`
 - `AnalysisState`
 
-## Analysis Pipeline Details
+## App State / Flow
 
-### Fetch stage
+`src/App.tsx` is the central coordinator.
 
-`fetchMRDiff()` routes based on URL:
+- Initial fetch gathers MR/PR diff data and optionally linked issue data.
+- Summary runs automatically after fetch.
+- Execution flow may also auto-run depending on `analysisStartMode`.
+- Code review, requirements, and MR description review are triggered manually.
+- Analysis state tracks tabs, selected file, selected issue, notes, review chat, and loading/error state.
 
-- GitHub:
-  - `GET /repos/{owner}/{repo}/pulls/{number}`
-  - `GET /repos/{owner}/{repo}/pulls/{number}/files`
-  - fetches each `raw_url` for full file context when available
-- GitLab:
-  - proxied through `/api/gitlab/api/v4/...`
-  - fetches MR metadata, changes, commits count
-  - fetches raw file contents from repository files API
-  - captures `diff_refs` for inline discussion posting
-
-### AI stage
-
-OpenRouter is called with `response_format.type = "json_schema"` and strict schemas for:
-
-- summary
-- execution flow
-- code review
-- requirements coverage
-- MR description review
-
-Important context limits in `src/lib/api.ts`:
-
-- per-file diff cap for summary/flow: `8,000` chars
-- per-file full-content cap for review: `25,000` chars
-- full-content fetch cap: `30,000` chars
-- total review context cap: `120,000` chars
-
-### App state sequencing
-
-`App.tsx` manages a simple state machine:
+Important step values in state:
 
 - `idle`
 - `fetching`
@@ -187,166 +152,135 @@ Important context limits in `src/lib/api.ts`:
 - `done`
 - `error`
 
-Summary and flow run automatically after fetch. Review/requirements/MR-description are manual follow-up actions.
-
-## Storage Model
-
-### localStorage
-
-- AI config key: `mergeai_ai_config`
-- theme key: `mergeai_theme`
-- nav sidebar expansion: `nav-sidebar-expanded`
-
-### IndexedDB
-
-- DB name: `mergeai_history`
-- Store: `analyses`
-- Max retained entries: `20`
-- Each history entry stores:
-  - URL
-  - PR title
-  - platform
-  - model
-  - timestamp
-  - full `AnalysisState`
-  - `AIConfig`
-
-## Posting / Collaboration Features
-
-The app can post review findings back to the source platform.
+## Platform Integration Details
 
 ### GitHub
 
-- inline comments: PR review comments API
-- fallback/general comments: issue comments API on the PR
+- Direct browser calls to GitHub REST API
+- PR metadata from `/repos/{owner}/{repo}/pulls/{number}`
+- changed files from `/pulls/{number}/files`
+- optional raw file content fetch via `raw_url`
+- general and inline comment posting supported
 
 ### GitLab
 
-- inline comments: MR discussions API using `position`
-- fallback/general comments: MR notes API
+- Requests routed through `/api/gitlab/api/v4/...`
+- MR metadata, changes, commits, issue/work-item fetches supported
+- `diff_refs` captured for inline discussion posting
+- inline and fallback general comment posting supported
 
-Issues can be:
+## AI / Prompting Model
 
-- selected in bulk
-- dismissed/restored
-- edited before posting
-- copied individually as markdown
+OpenRouter is called with strict JSON-schema response formatting.
 
-## Styling / Design System
+Main analysis surfaces handled in `src/lib/api.ts`:
 
-- Tailwind CSS with custom CSS-variable-driven theme tokens
-- Fonts loaded from Google Fonts in `src/index.css`
+- summary
+- execution flow
+- code review
+- requirements coverage
+- MR description review
+
+Context-management constraints in the current implementation matter:
+
+- diff snippets are truncated for lighter analyses
+- review mode uses larger full-file context
+- full-content hydration is selective and capped
+- total review context is capped to avoid runaway prompts
+
+Behavioral changes in `src/lib/api.ts` can have large product impact.
+
+## Persistence Model
+
+### localStorage
+
+- AI config
+- repo defaults
+- theme
+- navigation/sidebar UI state
+
+### IndexedDB
+
+- database: `mergeai_history`
+- store: `analyses`
+- stores recent analysis history with URL, metadata, analysis state, and AI config
+
+## UX / Design System
+
+- Tailwind CSS with CSS-variable-driven tokens
+- fonts loaded in `src/index.css`
   - `DM Sans`
   - `Lora`
   - `IBM Plex Mono`
-- Theme palette is neutral/dark-charcoal with green accent
-- Dark mode toggles by applying `.dark` to `document.documentElement`
-- Motion uses Framer Motion heavily
-- Print styles hide nav/header and simplify cards
+- theme palette is neutral/charcoal with green accent
+- dark mode works by toggling `.dark` on the root element
+- Framer Motion is used across the interface
+- print styles intentionally strip navigation and nonessential UI
 
-## Build / Run / Deploy
+## Build / Run
 
-### Scripts in `package.json`
+### Scripts
 
-- `dev`: Vite dev server
-- `build`: Vite production build
-- `preview`: Vite preview
-- `start`: run `server.js`
-- `lint`, `lint:*`, and `check:*` are present but the lint toolchain is not fully healthy in the current repo state
+- `npm run dev`: Vite dev server
+- `npm run build`: production build
+- `npm run preview`: Vite preview
+- `npm start`: serve built app with Express
+- `npm run lint:types`: TypeScript check
+- `npm run lint:css`: stylelint on `src/**/*.css`
+- `npm run lint`: typecheck + css lint
+- `npm run test`: Vitest watch
+- `npm run test:run`: Vitest once
+- `npm run check`: lint + tests
 
-### Docker
+### Environment assumptions
 
-- multi-stage `Dockerfile`
-  - builder: `npm ci` + `npm run build`
-  - runner: production install + `server.js` + `dist/`
-- `docker-compose.yml` exposes `${PORT:-3000}`
+- Node.js 20+
+- local OpenRouter API key entered in the UI
+- dev/prod app commonly runs on port `3000`
 
-### Public assets
+## Testing
 
-- `public/favicon.svg`
-- `public/vite.svg`
-- `public/_redirects`
+- Vitest
+- Testing Library
+- tests exist in both `src/components/*.test.tsx` and `src/lib/*.test.ts`
 
-## Important Current Realities / Inconsistencies
+## Current Codebase Realities
 
-These are worth remembering before future work:
-
-- `src/main.ts` is leftover Vite starter code and is not used by the app.
-- `src/Shell.tsx` looks like a generic mobile shell helper and is not part of the main flow.
-- `src/FileTreeSidebar.tsx` appears redundant now that `NavigationSidebar.tsx` embeds the file tree.
-- `package.json` references:
-  - `eslint`
-  - root `scripts/check-css-variables.js`
-  - root `scripts/check-css-classes.js`
-  - `bun run ...`
-  but:
-  - there is no root `scripts/` directory
-  - `eslint` is not declared in `package.json`
-  - lint execution is likely broken in the current state
-- `README.md` is useful but not fully trustworthy as a source of truth; some details are stale/duplicated.
-- The workspace currently contains `dist/` and `node_modules/`, but those are environment artifacts, not architecture.
+- `src/main.tsx` is the active React entrypoint.
+- There is no `src/main.ts` in the current repo.
+- README is broadly useful and currently matches the product direction reasonably well.
 - TypeScript is intentionally permissive:
   - `strict: false`
-  - many `noImplicit*`/safety checks disabled
+  - many safety flags are disabled
+- `package.json` contains several libraries that may not all be on the hot path; dependency cleanup could be worthwhile later.
 
-## Dependency Notes
+## High-Sensitivity Files
 
-Dependencies clearly used by the current codebase include:
-
-- `react`, `react-dom`
-- `vite`, `typescript`
-- `@vitejs/plugin-react`
-- `@tanstack/react-query`
-- `framer-motion`
-- `lucide-react`
-- `@xyflow/react`
-- `@dagrejs/dagre`
-- `shiki`
-- `express`
-- `http-proxy-middleware`
-- `date-fns`
-- `clsx`
-- `tailwind-merge`
-- `tailwindcss`
-- `tailwindcss-animate`
-- `postcss`
-- `autoprefixer`
-- `stylelint`
-
-There are also several dependencies in `package.json` that are not obviously part of the current main code path from the files inspected, so dependency cleanup may be worthwhile later.
-
-## Mental Model For Future Work
-
-When changing this repo, think of it as:
-
-- a client-heavy SPA
-- with a thin static/proxy server
-- built around AI-generated structured JSON
-- optimized for reviewing external code changes rather than editing local repos
-
-The most sensitive files for behavior changes are:
+When debugging or making behavioral changes, start with:
 
 - `src/App.tsx`
 - `src/lib/api.ts`
 - `src/lib/github-comment.ts`
+- `src/lib/review-utils.ts`
 - `src/components/ResultsDashboard.tsx`
 - `src/components/CodeReviewPanel.tsx`
 - `src/components/NavigationSidebar.tsx`
 - `src/components/DiffViewer.tsx`
 
-If future work involves correctness, start by checking:
+## Working Mental Model
 
-- URL parsing logic
-- GitHub/GitLab API assumptions
-- OpenRouter response schemas
-- file context truncation rules
-- inline-comment fallback behavior
-- local persistence compatibility
+Treat this repository as:
 
-## Suggested Follow-up Cleanup
+- a client-heavy review SPA
+- with a very thin server layer
+- optimized around structured AI output
+- focused on reviewing external code changes, not editing local repositories
 
-- remove dead starter/legacy files
-- repair or remove broken lint scripts
-- audit unused dependencies
-- tighten TypeScript settings gradually
-- sync README with current behavior
+The biggest correctness risks usually live in:
+
+- URL parsing
+- API response assumptions
+- context truncation and full-content hydration
+- schema and prompt changes
+- posting/comment-position logic
+- persistence compatibility

@@ -8,6 +8,7 @@ import { getHistory, deleteAnalysis } from "../lib/history";
 import type { HistoryEntry } from "../lib/history";
 import { formatDistanceToNow } from "date-fns";
 import { getRepoKeyFromUrl } from "../lib/review-utils";
+import { clearStoredRepoToken, loadStoredRepoToken, saveStoredRepoToken } from "../lib/token-storage";
 
 export interface SubmitPayload {
   url: string;
@@ -34,6 +35,8 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [showToken, setShowToken] = useState(false);
+  const [rememberToken, setRememberToken] = useState(false);
+  const [hasSavedToken, setHasSavedToken] = useState(false);
   const [issueUrl, setIssueUrl] = useState("");
   const [aiConfig, setAiConfig] = useState<AIConfig>(loadAIConfig);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -47,10 +50,29 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
     setAiConfig((current) => resolveAIConfigForRepo(current, repoKey));
   }, [repoKey]);
 
+  useEffect(() => {
+    if (!repoKey) return;
+    const storedToken = loadStoredRepoToken(repoKey);
+    if (storedToken?.token) {
+      setToken(storedToken.token);
+      setRememberToken(storedToken.persistence === "persistent");
+      setHasSavedToken(true);
+      setShowToken(true);
+      return;
+    }
+
+    setHasSavedToken(false);
+  }, [repoKey]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!url.trim()) return;
-    onSubmit({ url: url.trim(), token: token.trim() || undefined, aiConfig, issueUrl: issueUrl.trim() || undefined });
+    const trimmedToken = token.trim();
+    if (repoKey && trimmedToken) {
+      saveStoredRepoToken(repoKey, trimmedToken, rememberToken ? "persistent" : "session");
+      setHasSavedToken(true);
+    }
+    onSubmit({ url: url.trim(), token: trimmedToken || undefined, aiConfig, issueUrl: issueUrl.trim() || undefined });
   };
 
   const isValidUrl = url.includes("github.com") || url.includes("gitlab.com");
@@ -164,10 +186,40 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
                         disabled={isLoading}
                       />
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1.5 flex items-center gap-1">
-                      <Shield size={11} />
-                      Token is sent securely and never stored
-                    </p>
+                    <label className="mt-2 flex items-start gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={rememberToken}
+                        onChange={(e) => setRememberToken(e.target.checked)}
+                        className="mt-0.5 rounded border-border bg-background"
+                        disabled={isLoading}
+                      />
+                      <span>
+                        Remember on this device for this repo. If unchecked, the token is saved only for this browser session.
+                      </span>
+                    </label>
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                      <p className="text-xs text-muted-foreground flex items-center gap-1">
+                        <Shield size={11} />
+                        {rememberToken
+                          ? "Stored in this browser until you clear it. Avoid using this on shared devices."
+                          : "Stored only until this browser session ends."}
+                      </p>
+                      {hasSavedToken && repoKey && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            clearStoredRepoToken(repoKey);
+                            setToken("");
+                            setRememberToken(false);
+                            setHasSavedToken(false);
+                          }}
+                          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          Forget saved token
+                        </button>
+                      )}
+                    </div>
                   </motion.div>
                 )}
               </div>

@@ -13,7 +13,8 @@ import ConfirmModal from "./ConfirmModal";
 import type { AIConfig, PostingMode, ReviewMode } from "./AISettings";
 import { ReviewModePicker } from "./ReviewModePicker";
 import { askReviewQuestion, generateIssueFix } from "../lib/api";
-import { buildMergeReadinessGates } from "../lib/review-utils";
+import { buildMergeReadinessGates, getRepoKeyFromUrl } from "../lib/review-utils";
+import { clearStoredRepoToken, loadStoredRepoToken, saveStoredRepoToken } from "../lib/token-storage";
 
 interface CodeReviewPanelProps {
   review: CodeReview;
@@ -674,6 +675,9 @@ export function CodeReviewPanel({
   const [postingSelected, setPostingSelected] = useState(false);
   const [selectedIssues, setSelectedIssues] = useState<Set<string>>(new Set());
   const [localToken, setLocalToken] = useState("");
+  const [rememberToken, setRememberToken] = useState(false);
+  const [hasSavedToken, setHasSavedToken] = useState(false);
+  const repoKey = getRepoKeyFromUrl(prUrl ?? "");
   const effectiveToken = prToken || localToken || "";
   const hasToken = !!effectiveToken;
   const canPost = !!prUrl && hasToken;
@@ -692,6 +696,19 @@ export function CodeReviewPanel({
     });
     return () => { cancelled = true; };
   }, [prUrl, effectiveToken, review.issues]);
+
+  useEffect(() => {
+    if (!repoKey || prToken) return;
+    const storedToken = loadStoredRepoToken(repoKey);
+    if (storedToken?.token) {
+      setLocalToken(storedToken.token);
+      setRememberToken(storedToken.persistence === "persistent");
+      setHasSavedToken(true);
+      return;
+    }
+
+    setHasSavedToken(false);
+  }, [repoKey, prToken]);
   const [editedComments, setEditedComments] = useState<Record<string, string>>({});
   const [editModal, setEditModal] = useState<{ issues: ReviewIssue[]; bodies: Record<string, string> } | null>(null);
   const [dismissedIssues, setDismissedIssues] = useState<Set<string>>(new Set());
@@ -1414,7 +1431,12 @@ export function CodeReviewPanel({
                 onSubmit={(e) => {
                   e.preventDefault();
                   if (localToken.trim()) {
-                    onTokenChange?.(localToken.trim());
+                    const trimmedToken = localToken.trim();
+                    if (repoKey) {
+                      saveStoredRepoToken(repoKey, trimmedToken, rememberToken ? "persistent" : "session");
+                      setHasSavedToken(true);
+                    }
+                    onTokenChange?.(trimmedToken);
                     toast.success("Token saved — you can now post comments");
                   }
                 }}
@@ -1426,9 +1448,18 @@ export function CodeReviewPanel({
                     value={localToken}
                     onChange={(e) => setLocalToken(e.target.value)}
                     placeholder={mrData?.platform === "gitlab" ? "glpat-xxxx" : "ghp_xxxx"}
-                    className="w-full pl-9 pr-3 py-2 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all placeholder:text-muted-foreground/50 text-foreground"
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all placeholder:text-muted-foreground/50 text-foreground"
                   />
                 </div>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={rememberToken}
+                    onChange={(e) => setRememberToken(e.target.checked)}
+                    className="rounded border-border bg-background"
+                  />
+                  <span>Remember</span>
+                </label>
                 <button
                   type="submit"
                   disabled={!localToken.trim()}
@@ -1445,10 +1476,29 @@ export function CodeReviewPanel({
                   Clear
                 </button>
               </form>
-              <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
-                <Shield size={11} />
-                Token is used only for this session and never stored
-              </p>
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Shield size={11} />
+                  {rememberToken
+                    ? "Stored in this browser for this repo until you clear it."
+                    : "Stored only for this browser session unless you opt in to remember it."}
+                </p>
+                {hasSavedToken && repoKey && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearStoredRepoToken(repoKey);
+                      setLocalToken("");
+                      setRememberToken(false);
+                      setHasSavedToken(false);
+                      onTokenChange?.("");
+                    }}
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Forget saved token
+                  </button>
+                )}
+              </div>
             </motion.div>
           )}
 
