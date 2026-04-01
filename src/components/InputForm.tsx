@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { GitPullRequest, Key, ChevronDown, ChevronUp, Sparkles, GitBranch, ArrowRight, Shield, FileText, Search, Layers, Clock, Trash2, ListChecks, Cpu, CheckCircle2, BookOpenText } from "lucide-react";
+import { GitPullRequest, Key, ChevronDown, ChevronUp, Sparkles, GitBranch, ArrowRight, Shield, FileText, Search, Layers, Clock, Trash2, ListChecks, Cpu, CheckCircle2, BookOpenText, type LucideIcon } from "lucide-react";
 import { AISettings, loadAIConfig, resolveAIConfigForRepo } from "./AISettings";
 import type { AIConfig } from "./AISettings";
 import { RepoContextSettings } from "./RepoContextSettings";
@@ -32,6 +32,48 @@ const EXAMPLE_URLS = [
   "https://github.com/vercel/next.js/pull/54321",
   "https://gitlab.com/gitlab-org/gitlab/-/merge_requests/12345",
 ];
+
+function SetupOptionCard({
+  title,
+  subtitle,
+  description,
+  icon: Icon,
+  open,
+  highlighted = false,
+  onClick,
+}: {
+  title: string;
+  subtitle: string;
+  description: string;
+  icon: LucideIcon;
+  open: boolean;
+  highlighted?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`h-full min-h-[118px] rounded-xl border px-5 py-4 text-left transition-all hover:-translate-y-0.5 ${open ? "border-foreground/20 bg-card shadow-sm" : "border-border bg-background hover:border-foreground/20"} ${highlighted ? "ring-1 ring-accent/20" : ""}`}
+    >
+      <div className="flex h-full flex-col justify-between gap-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className={`flex h-9 w-9 items-center justify-center rounded-lg border ${highlighted ? "border-accent/20 bg-accent/10" : "border-border bg-secondary/70"}`}>
+              <Icon size={16} className={highlighted ? "text-accent" : "text-muted-foreground"} />
+            </div>
+            <div>
+              <span className="text-base font-semibold text-foreground">{title}</span>
+              <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
+            </div>
+          </div>
+          {open ? <ChevronUp size={14} className="mt-1 text-muted-foreground" /> : <ChevronDown size={14} className="mt-1 text-muted-foreground" />}
+        </div>
+        <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
+      </div>
+    </button>
+  );
+}
 
 export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHistory }: InputFormProps) {
   const [url, setUrl] = useState("");
@@ -89,8 +131,6 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
   const isValidUrl = url.includes("github.com") || url.includes("gitlab.com");
   const platformLabel = url.includes("gitlab.com") ? "GitLab" : url.includes("github.com") ? "GitHub" : "GitHub or GitLab";
   const needsApiKey = !aiConfig.apiKey.trim();
-  const hasOptionalSetup = showAISettings || showRepoContext || showToken || showIssue;
-
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
@@ -117,7 +157,7 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-          className="w-full max-w-2xl"
+          className="w-full max-w-5xl"
         >
           {/* Pill badge */}
           <div className="flex justify-center mb-8">
@@ -127,23 +167,25 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
             </div>
           </div>
 
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-center text-foreground mb-4 leading-tight tracking-tight">
-            Start with the PR or MR
-            <br />
-            <span style={{ color: "hsl(142 71% 45%)" }}>then add details only if you need them</span>
-          </h1>
+          <div className="mx-auto mb-12 w-full max-w-4xl px-3 sm:px-6 lg:px-7">
+            <h1 className="mx-auto max-w-[920px] text-3xl sm:text-4xl md:text-5xl font-bold text-center text-foreground mb-4 leading-tight tracking-tight">
+              Start with the PR or MR
+              <br />
+              <span style={{ color: "hsl(142 71% 45%)" }}>then add details only if you need them</span>
+            </h1>
 
-          <p className="text-center text-muted-foreground text-lg mb-12 leading-relaxed">
-            Paste a GitHub PR or GitLab MR link to begin. Tokens, requirement checks,
-            and AI customization are available as guided setup instead of upfront clutter.
-          </p>
+            <p className="mx-auto max-w-[860px] text-center text-muted-foreground text-lg leading-relaxed">
+              Paste a GitHub PR or GitLab MR link to begin. Tokens, requirement checks,
+              and AI customization are available as guided setup instead of upfront clutter.
+            </p>
+          </div>
 
           {/* Form card */}
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.15, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-            className="bg-card border border-border rounded-2xl p-6 shadow-lg"
+            className="mx-auto w-full max-w-4xl bg-card border border-border rounded-2xl p-5 sm:p-6 lg:p-7 shadow-lg"
           >
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
@@ -191,84 +233,34 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
                   </div>
                 </div>
 
-                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                  <button
-                    type="button"
-                    onClick={() => setShowAISettings((open) => !open)}
-                    className={`rounded-xl border px-4 py-3 text-left transition-all ${showAISettings ? "border-foreground/20 bg-card" : "border-border bg-background hover:border-foreground/20"} ${needsApiKey ? "ring-1 ring-accent/20" : ""}`}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <Cpu size={15} className={needsApiKey ? "text-accent" : "text-muted-foreground"} />
-                        <span className="text-sm font-medium text-foreground">AI Settings</span>
+                <div className="mt-5 space-y-4">
+                  <div className="rounded-2xl border border-accent/20 bg-accent/5 p-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-accent">Required First</p>
+                        <p className="mt-1 text-sm text-foreground">Set up the AI reviewer before running analysis.</p>
                       </div>
-                      {showAISettings ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
+                      <span className="inline-flex w-fit items-center rounded-full border border-accent/20 bg-background/80 px-2.5 py-1 text-[11px] font-medium text-accent">
+                        Step 1
+                      </span>
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {needsApiKey ? "Add your OpenRouter key and choose a model." : "Using saved model and API key."}
-                    </p>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowRepoContext((open) => !open)}
-                    className={`rounded-xl border px-4 py-3 text-left transition-all ${showRepoContext ? "border-foreground/20 bg-card" : "border-border bg-background hover:border-foreground/20"}`}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <BookOpenText size={15} className="text-muted-foreground" />
-                        <span className="text-sm font-medium text-foreground">Repo Context</span>
-                      </div>
-                      {showRepoContext ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
+                    <div className="mt-4 grid grid-cols-1">
+                      <SetupOptionCard
+                        title="AI Settings"
+                        subtitle="Recommended first step"
+                        description={needsApiKey ? "Add your OpenRouter key and choose a model." : "Using saved model and API key."}
+                        icon={Cpu}
+                        open={showAISettings}
+                        highlighted={needsApiKey}
+                        onClick={() => setShowAISettings((open) => !open)}
+                      />
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Stable repo purpose, patterns, and review guidance.
-                    </p>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowToken((open) => !open)}
-                    className={`rounded-xl border px-4 py-3 text-left transition-all ${showToken ? "border-foreground/20 bg-card" : "border-border bg-background hover:border-foreground/20"}`}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <Key size={15} className="text-muted-foreground" />
-                        <span className="text-sm font-medium text-foreground">Access Token</span>
-                      </div>
-                      {showToken ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Private repos and comment posting.
-                    </p>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowIssue((open) => !open)}
-                    className={`rounded-xl border px-4 py-3 text-left transition-all ${showIssue ? "border-foreground/20 bg-card" : "border-border bg-background hover:border-foreground/20"}`}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <ListChecks size={15} className="text-muted-foreground" />
-                        <span className="text-sm font-medium text-foreground">Linked Issue</span>
-                      </div>
-                      {showIssue ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Optional requirement coverage checks.
-                    </p>
-                  </button>
-                </div>
-
-                {hasOptionalSetup && (
-                  <div className="mt-4 space-y-4">
                     {showAISettings && (
                       <motion.div
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: "auto" }}
                         transition={{ duration: 0.2 }}
-                        className="rounded-xl border border-border bg-card p-4"
+                        className="mt-4 rounded-xl border border-border bg-card p-4"
                       >
                         <div className="mb-3">
                           <p className="text-sm font-semibold text-foreground">AI setup</p>
@@ -279,126 +271,167 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
                         <AISettings config={aiConfig} onChange={setAiConfig} disabled={isLoading} repoKey={repoKey} />
                       </motion.div>
                     )}
+                  </div>
 
-                    {showRepoContext && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        transition={{ duration: 0.2 }}
-                      >
-                        <RepoContextSettings
-                          config={aiConfig}
-                          onChange={setAiConfig}
-                          disabled={isLoading}
-                          repoUrl={isValidUrl ? url.trim() : undefined}
-                          repoToken={token.trim() || undefined}
-                        />
-                      </motion.div>
-                    )}
-
-                    {showToken && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        transition={{ duration: 0.2 }}
-                        className="rounded-xl border border-border bg-card p-4"
-                      >
-                        <div className="mb-3">
-                          <p className="text-sm font-semibold text-foreground">Access token</p>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Optional. Add a token for private {platformLabel} repos or if you want to post review comments back later.
-                          </p>
-                        </div>
-                        <div className="relative">
-                          <Shield size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                          <input
-                            type="password"
-                            value={token}
-                            onChange={(e) => setToken(e.target.value)}
-                            placeholder="ghp_xxxx or glpat-xxxx"
-                            className="w-full pl-10 pr-4 py-2.5 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all placeholder:text-muted-foreground/60 text-foreground"
-                            disabled={isLoading}
-                          />
-                        </div>
-                        <label className="mt-2 flex items-start gap-2 text-xs text-muted-foreground">
-                          <input
-                            type="checkbox"
-                            checked={rememberToken}
-                            onChange={(e) => setRememberToken(e.target.checked)}
-                            className="mt-0.5 rounded border-border bg-background"
-                            disabled={isLoading}
-                          />
-                          <span>
-                            Remember on this device for this repo. If unchecked, the token is saved only for this browser session.
-                          </span>
-                        </label>
-                        <div className="mt-2 flex items-center justify-between gap-3">
-                          <p className="text-xs text-muted-foreground flex items-center gap-1">
-                            <Shield size={11} />
-                            {rememberToken
-                              ? "Stored in this browser until you clear it. Avoid using this on shared devices."
-                              : "Stored only until this browser session ends."}
-                          </p>
-                          {hasSavedToken && repoKey && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                clearStoredRepoToken(repoKey);
-                                setToken("");
-                                setRememberToken(false);
-                                setHasSavedToken(false);
-                              }}
-                              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                            >
-                              Forget saved token
-                            </button>
-                          )}
-                        </div>
-                        {platformLabel === "GitLab" && (
-                          <a
-                            href="https://docs.gitlab.com/user/profile/personal_access_tokens/"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  <div className="rounded-2xl border border-border bg-background/40 p-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Optional Extras</p>
+                        <p className="mt-1 text-sm text-foreground">Add project context or access only when this review needs it.</p>
+                      </div>
+                      <span className="inline-flex w-fit items-center rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                        Step 2
+                      </span>
+                    </div>
+                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 xl:auto-rows-fr">
+                      <SetupOptionCard
+                        title="Repo Context"
+                        subtitle="Project-aware review guidance"
+                        description="Stable repo purpose, patterns, and review guidance."
+                        icon={BookOpenText}
+                        open={showRepoContext}
+                        onClick={() => setShowRepoContext((open) => !open)}
+                      />
+                      <SetupOptionCard
+                        title="Access Token"
+                        subtitle="Only if you need it"
+                        description="Private repos and comment posting."
+                        icon={Key}
+                        open={showToken}
+                        onClick={() => setShowToken((open) => !open)}
+                      />
+                      <SetupOptionCard
+                        title="Linked Issue"
+                        subtitle="For requirement coverage"
+                        description="Optional requirement coverage checks."
+                        icon={ListChecks}
+                        open={showIssue}
+                        onClick={() => setShowIssue((open) => !open)}
+                      />
+                    </div>
+                    {(showRepoContext || showToken || showIssue) && (
+                      <div className="mt-4 space-y-4">
+                        {showRepoContext && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            transition={{ duration: 0.2 }}
                           >
-                            <Key size={11} />
-                            How to create a GitLab personal access token
-                          </a>
+                            <RepoContextSettings
+                              config={aiConfig}
+                              onChange={setAiConfig}
+                              disabled={isLoading}
+                              repoUrl={isValidUrl ? url.trim() : undefined}
+                              repoToken={token.trim() || undefined}
+                            />
+                          </motion.div>
                         )}
-                      </motion.div>
-                    )}
 
-                    {showIssue && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        transition={{ duration: 0.2 }}
-                        className="rounded-xl border border-border bg-card p-4"
-                      >
-                        <div className="mb-3">
-                          <p className="text-sm font-semibold text-foreground">Linked issue</p>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Optional. Add a GitHub issue or GitLab issue/work item to run requirement coverage checks after analysis.
-                          </p>
-                        </div>
-                        <div className="relative">
-                          <ListChecks size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                          <input
-                            type="url"
-                            value={issueUrl}
-                            onChange={(e) => setIssueUrl(e.target.value)}
-                            placeholder="https://gitlab.com/group/project/-/issues/123"
-                            className="w-full pl-10 pr-4 py-2.5 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all placeholder:text-muted-foreground/60 text-foreground"
-                            disabled={isLoading}
-                          />
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
-                          Requirements check and MR description review are run on demand, so adding an issue here does not increase the initial analysis cost.
-                        </p>
-                      </motion.div>
+                        {showToken && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            transition={{ duration: 0.2 }}
+                            className="rounded-xl border border-border bg-card p-4"
+                          >
+                            <div className="mb-3">
+                              <p className="text-sm font-semibold text-foreground">Access token</p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Optional. Add a token for private {platformLabel} repos or if you want to post review comments back later.
+                              </p>
+                            </div>
+                            <div className="relative">
+                              <Shield size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                              <input
+                                type="password"
+                                value={token}
+                                onChange={(e) => setToken(e.target.value)}
+                                placeholder="ghp_xxxx or glpat-xxxx"
+                                className="w-full pl-10 pr-4 py-2.5 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all placeholder:text-muted-foreground/60 text-foreground"
+                                disabled={isLoading}
+                              />
+                            </div>
+                            <label className="mt-2 flex items-start gap-2 text-xs text-muted-foreground">
+                              <input
+                                type="checkbox"
+                                checked={rememberToken}
+                                onChange={(e) => setRememberToken(e.target.checked)}
+                                className="mt-0.5 rounded border-border bg-background"
+                                disabled={isLoading}
+                              />
+                              <span>
+                                Remember on this device for this repo. If unchecked, the token is saved only for this browser session.
+                              </span>
+                            </label>
+                            <div className="mt-2 flex items-center justify-between gap-3">
+                              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                                <Shield size={11} />
+                                {rememberToken
+                                  ? "Stored in this browser until you clear it. Avoid using this on shared devices."
+                                  : "Stored only until this browser session ends."}
+                              </p>
+                              {hasSavedToken && repoKey && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    clearStoredRepoToken(repoKey);
+                                    setToken("");
+                                    setRememberToken(false);
+                                    setHasSavedToken(false);
+                                  }}
+                                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                                >
+                                  Forget saved token
+                                </button>
+                              )}
+                            </div>
+                            {platformLabel === "GitLab" && (
+                              <a
+                                href="https://docs.gitlab.com/user/profile/personal_access_tokens/"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                              >
+                                <Key size={11} />
+                                How to create a GitLab personal access token
+                              </a>
+                            )}
+                          </motion.div>
+                        )}
+
+                        {showIssue && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            transition={{ duration: 0.2 }}
+                            className="rounded-xl border border-border bg-card p-4"
+                          >
+                            <div className="mb-3">
+                              <p className="text-sm font-semibold text-foreground">Linked issue</p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Optional. Add a GitHub issue or GitLab issue/work item to run requirement coverage checks after analysis.
+                              </p>
+                            </div>
+                            <div className="relative">
+                              <ListChecks size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                              <input
+                                type="url"
+                                value={issueUrl}
+                                onChange={(e) => setIssueUrl(e.target.value)}
+                                placeholder="https://gitlab.com/group/project/-/issues/123"
+                                className="w-full pl-10 pr-4 py-2.5 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-foreground/20 focus:border-foreground/40 transition-all placeholder:text-muted-foreground/60 text-foreground"
+                                disabled={isLoading}
+                              />
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+                              Requirements check and MR description review are run on demand, so adding an issue here does not increase the initial analysis cost.
+                            </p>
+                          </motion.div>
+                        )}
+                      </div>
                     )}
                   </div>
-                )}
+                </div>
               </div>
 
               <button
@@ -451,7 +484,7 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.25, duration: 0.45 }}
-            className="mt-12 w-full max-w-2xl"
+            className="mt-12 w-full max-w-4xl"
           >
             <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
               <Clock size={14} className="text-muted-foreground" />
@@ -507,7 +540,7 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3, duration: 0.5 }}
-          className="mt-20 grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl w-full px-4"
+          className="mt-20 grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-4xl w-full px-4"
         >
           {[
             {
