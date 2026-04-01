@@ -37,7 +37,7 @@ export async function saveAnalysis(
   url: string,
   state: AnalysisState,
   aiConfig: AIConfig,
-): Promise<void> {
+): Promise<HistoryEntry | null> {
   try {
     const normalizedConfig = sanitizeAIConfig(aiConfig);
     const db = await openDB();
@@ -80,8 +80,10 @@ export async function saveAnalysis(
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
+    return entry;
   } catch {
     // Silently fail — history is a nice-to-have
+    return null;
   }
 }
 
@@ -113,17 +115,72 @@ export async function getHistory(): Promise<HistoryEntry[]> {
   }
 }
 
-export async function deleteAnalysis(id: string): Promise<void> {
+export async function deleteAnalysis(id: string): Promise<boolean> {
   try {
     const db = await openDB();
     const tx = db.transaction(STORE_NAME, "readwrite");
-    tx.objectStore(STORE_NAME).delete(id);
+    const request = tx.objectStore(STORE_NAME).delete(id);
+    await new Promise<void>((resolve, reject) => {
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
+    return true;
   } catch {
     // Silently fail
+    return false;
+  }
+}
+
+export async function clearAnalysisHistory(): Promise<boolean> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const request = tx.objectStore(STORE_NAME).clear();
+    await new Promise<void>((resolve, reject) => {
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    return true;
+  } catch {
+    // Silently fail
+    return false;
+  }
+}
+
+export async function deleteAnalysesForUrl(url: string): Promise<number> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const index = store.index("timestamp");
+
+    const entries = await new Promise<HistoryEntry[]>((resolve, reject) => {
+      const request = index.getAll();
+      request.onsuccess = () => resolve(request.result as HistoryEntry[]);
+      request.onerror = () => reject(request.error);
+    });
+
+    const matchingEntries = entries.filter((entry) => entry.url === url);
+    for (const entry of matchingEntries) {
+      store.delete(entry.id);
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+
+    return matchingEntries.length;
+  } catch {
+    return 0;
   }
 }
 

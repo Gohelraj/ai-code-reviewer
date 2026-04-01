@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import toast from "react-hot-toast";
 import { GitPullRequest, Key, ChevronDown, ChevronUp, Sparkles, GitBranch, ArrowRight, Shield, FileText, Search, Layers, Clock, Trash2, ListChecks, Cpu, CheckCircle2, BookOpenText, type LucideIcon } from "lucide-react";
 import { AISettings, loadAIConfig, resolveAIConfigForRepo } from "./AISettings";
 import type { AIConfig } from "./AISettings";
@@ -25,6 +26,7 @@ interface InputFormProps {
   theme: "light" | "dark" | "system";
   onThemeChange: (theme: "light" | "dark" | "system") => void;
   onLoadHistory?: (entry: HistoryEntry) => void;
+  onClearHistory?: () => Promise<void> | void;
 }
 
 const EXAMPLE_URLS = [
@@ -75,7 +77,7 @@ function SetupOptionCard({
   );
 }
 
-export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHistory }: InputFormProps) {
+export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHistory, onClearHistory }: InputFormProps) {
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [showAISettings, setShowAISettings] = useState(false);
@@ -87,10 +89,11 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
   const [issueUrl, setIssueUrl] = useState("");
   const [aiConfig, setAiConfig] = useState<AIConfig>(loadAIConfig);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [showAllHistory, setShowAllHistory] = useState(false);
   const repoKey = getRepoKeyFromUrl(url);
 
   useEffect(() => {
-    getHistory().then((entries) => setHistory(entries.slice(0, 5)));
+    getHistory().then((entries) => setHistory(entries));
   }, []);
 
   useEffect(() => {
@@ -131,6 +134,7 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
   const isValidUrl = url.includes("github.com") || url.includes("gitlab.com");
   const platformLabel = url.includes("gitlab.com") ? "GitLab" : url.includes("github.com") ? "GitHub" : "GitHub or GitLab";
   const needsApiKey = !aiConfig.apiKey.trim();
+  const displayedHistory = showAllHistory ? history : history.slice(0, 5);
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
@@ -486,12 +490,40 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
             transition={{ delay: 0.25, duration: 0.45 }}
             className="mt-12 w-full max-w-4xl"
           >
-            <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-              <Clock size={14} className="text-muted-foreground" />
-              Recent Reviews
-            </h3>
-            <div className="space-y-2">
-              {history.map((entry) => (
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Clock size={14} className="text-muted-foreground" />
+                Recent Reviews
+              </h3>
+              <div className="flex items-center gap-3">
+                {history.length > 5 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllHistory((current) => !current)}
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {showAllHistory ? "Show Less" : "View All"}
+                  </button>
+                )}
+                {onClearHistory && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!history.length) return;
+                      if (!window.confirm("Delete all saved review history? This cannot be undone.")) return;
+                      await onClearHistory();
+                      setHistory([]);
+                      setShowAllHistory(false);
+                    }}
+                    className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+                  >
+                    Clear All
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className={`space-y-2 ${showAllHistory ? "max-h-[28rem] overflow-y-auto pr-1" : ""}`}>
+              {displayedHistory.map((entry) => (
                 <div
                   key={entry.id}
                   className="flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3 hover:border-foreground/20 transition-all group"
@@ -519,10 +551,23 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
                     </p>
                   </button>
                   <button
+                    type="button"
                     onClick={async (e) => {
                       e.stopPropagation();
-                      await deleteAnalysis(entry.id);
-                      setHistory((h) => h.filter((x) => x.id !== entry.id));
+                      if (!window.confirm(`Delete "${entry.prTitle}" from saved review history? This cannot be undone.`)) {
+                        return;
+                      }
+                      const deleted = await deleteAnalysis(entry.id);
+                      const refreshedHistory = await getHistory();
+                      setHistory(refreshedHistory);
+                      if (refreshedHistory.length <= 5) {
+                        setShowAllHistory(false);
+                      }
+                      if (deleted && !refreshedHistory.some((savedEntry) => savedEntry.id === entry.id)) {
+                        toast.success("Deleted saved review.");
+                      } else {
+                        toast.error("Could not delete that saved review.");
+                      }
                     }}
                     className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all"
                     title="Delete"

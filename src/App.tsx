@@ -6,7 +6,7 @@ import { AnalysisProgress } from "./components/AnalysisProgress";
 import { ResultsDashboard } from "./components/ResultsDashboard";
 import { fetchMRDiff, analyzeSummary, analyzeExecutionFlow, analyzeCodeReview, fetchIssueData, analyzeRequirements, analyzeMRDescription, prepareMRDataForReview } from "./lib/api";
 import type { IssueData } from "./lib/api";
-import { getLatestHistoryForUrl, getLatestReviewHistoryForUrl, saveAnalysis } from "./lib/history";
+import { clearAnalysisHistory, deleteAnalysesForUrl, deleteAnalysis, getLatestHistoryForUrl, getLatestReviewHistoryForUrl, saveAnalysis } from "./lib/history";
 import type { HistoryEntry } from "./lib/history";
 import type { AnalysisState } from "./types";
 import type { AIConfig, ReviewMode } from "./components/AISettings";
@@ -42,7 +42,14 @@ function App() {
   const [issueData, setIssueData] = useState<IssueData | null>(null);
   const [loadedFromHistory, setLoadedFromHistory] = useState(false);
   const [loadedHistoryTimestamp, setLoadedHistoryTimestamp] = useState<number | null>(null);
+  const [currentHistoryEntryId, setCurrentHistoryEntryId] = useState<string | null>(null);
   const { theme, setTheme } = useDarkMode();
+
+  const rememberSavedEntry = useCallback((entry: HistoryEntry | null) => {
+    if (entry) {
+      setCurrentHistoryEntryId(entry.id);
+    }
+  }, []);
 
   const updateState = useCallback((patch: Partial<AnalysisState>) => {
     setState((prev) => ({ ...prev, ...patch }));
@@ -74,6 +81,7 @@ function App() {
     setIssueData(null);
     setLoadedFromHistory(false);
     setLoadedHistoryTimestamp(null);
+    setCurrentHistoryEntryId(null);
 
     try {
       if (!forceRefresh) {
@@ -90,6 +98,7 @@ function App() {
           });
           setLoadedFromHistory(true);
           setLoadedHistoryTimestamp(existingEntry.timestamp);
+          setCurrentHistoryEntryId(existingEntry.id);
           toast.success("Loaded saved analysis. Use Refresh MR to fetch the latest changes.");
           return;
         }
@@ -153,7 +162,7 @@ function App() {
       // Save to history
       // We need to get the latest state, so use a callback
       setState((prev) => {
-        saveAnalysis(url, prev, normalizedConfig);
+        void saveAnalysis(url, prev, normalizedConfig).then(rememberSavedEntry);
         return prev;
       });
     } catch (err) {
@@ -186,6 +195,7 @@ function App() {
     setIssueData(null);
     setLoadedFromHistory(false);
     setLoadedHistoryTimestamp(null);
+    setCurrentHistoryEntryId(null);
   }, []);
 
   const handleLoadHistory = useCallback((entry: HistoryEntry) => {
@@ -201,7 +211,51 @@ function App() {
       selectedFile: entry.state.selectedFile,
       selectedIssueId: entry.state.selectedIssueId,
     });
+    setCurrentHistoryEntryId(entry.id);
   }, []);
+
+  const handleDeleteCurrentReview = useCallback(async () => {
+    if (!currentHistoryEntryId) {
+      toast.error("This review is not saved yet.");
+      return;
+    }
+    const deleted = await deleteAnalysis(currentHistoryEntryId);
+    if (!deleted) {
+      toast.error("Could not delete the current saved review.");
+      return;
+    }
+    toast.success("Deleted the current saved review.");
+    handleReset();
+  }, [currentHistoryEntryId, handleReset]);
+
+  const handleClearAllHistory = useCallback(async () => {
+    const cleared = await clearAnalysisHistory();
+    if (!cleared) {
+      toast.error("Could not clear saved review history.");
+      return;
+    }
+    setCurrentHistoryEntryId(null);
+    setLoadedFromHistory(false);
+    setLoadedHistoryTimestamp(null);
+    toast.success("Cleared all saved review history.");
+  }, []);
+
+  const handleDeleteCurrentMrHistory = useCallback(async () => {
+    if (!analysisUrl) {
+      toast.error("No MR or PR is currently loaded.");
+      return;
+    }
+    const deletedCount = await deleteAnalysesForUrl(analysisUrl);
+    if (deletedCount === 0) {
+      toast.error("No saved reviews were found for this MR.");
+      return;
+    }
+    setCurrentHistoryEntryId(null);
+    setLoadedFromHistory(false);
+    setLoadedHistoryTimestamp(null);
+    toast.success(`Deleted ${deletedCount} saved review${deletedCount === 1 ? "" : "s"} for this MR.`);
+    handleReset();
+  }, [analysisUrl, handleReset]);
 
   const handleTabChange = useCallback((tab: "summary" | "flow" | "review" | "requirements" | "mr-description") => {
     updateState({ activeTab: tab });
@@ -217,11 +271,11 @@ function App() {
     setState((prev) => {
       const updated = { ...prev, reviewerNotes: notes };
       if (analysisUrl && activeAIConfig) {
-        saveAnalysis(analysisUrl, updated, activeAIConfig);
+        void saveAnalysis(analysisUrl, updated, activeAIConfig).then(rememberSavedEntry);
       }
       return updated;
     });
-  }, [updateState, analysisUrl, activeAIConfig]);
+  }, [updateState, analysisUrl, activeAIConfig, rememberSavedEntry]);
 
   const handleTokenChange = useCallback((token: string) => {
     setAnalysisToken(token);
@@ -255,7 +309,7 @@ function App() {
       toast.success("Execution flow complete!");
       setState((prev) => {
         if (analysisUrl && activeAIConfig) {
-          saveAnalysis(analysisUrl, prev, activeAIConfig);
+          void saveAnalysis(analysisUrl, prev, activeAIConfig).then(rememberSavedEntry);
         }
         return prev;
       });
@@ -266,7 +320,7 @@ function App() {
     } finally {
       setFlowLoading(false);
     }
-  }, [state.mrData, activeAIConfig, flowLoading, updateState, analysisUrl]);
+  }, [state.mrData, activeAIConfig, flowLoading, updateState, analysisUrl, rememberSavedEntry]);
 
   const handleTriggerReview = useCallback(async (reviewModeOverride?: ReviewMode) => {
     if (!state.mrData || !activeAIConfig || reviewLoading) return;
@@ -303,7 +357,7 @@ function App() {
       // Update history with review
       setState((prev) => {
         if (analysisUrl) {
-          saveAnalysis(analysisUrl, prev, reviewConfig);
+          void saveAnalysis(analysisUrl, prev, reviewConfig).then(rememberSavedEntry);
         }
         return prev;
       });
@@ -314,18 +368,18 @@ function App() {
     } finally {
       setReviewLoading(false);
     }
-  }, [state.mrData, state.codeReview, state.previousReview, state.previousReviewMeta, state.selectedIssueId, activeAIConfig, reviewLoading, updateState, analysisToken, analysisUrl]);
+  }, [state.mrData, state.codeReview, state.previousReview, state.previousReviewMeta, state.selectedIssueId, activeAIConfig, reviewLoading, updateState, analysisToken, analysisUrl, rememberSavedEntry]);
 
   const handleReviewChatChange = useCallback((messages: AnalysisState["reviewChat"]) => {
     updateState({ reviewChat: messages });
     setState((prev) => {
       const updated = { ...prev, reviewChat: messages };
       if (analysisUrl && activeAIConfig) {
-        saveAnalysis(analysisUrl, updated, activeAIConfig);
+        void saveAnalysis(analysisUrl, updated, activeAIConfig).then(rememberSavedEntry);
       }
       return updated;
     });
-  }, [updateState, analysisUrl, activeAIConfig]);
+  }, [updateState, analysisUrl, activeAIConfig, rememberSavedEntry]);
 
   const handleSelectedIssueChange = useCallback((selectedIssueId?: string) => {
     updateState({ selectedIssueId });
@@ -343,7 +397,9 @@ function App() {
       updateState({ requirementsCheck });
       toast.success("Requirements check complete!");
       setState((prev) => {
-        if (analysisUrl && activeAIConfig) saveAnalysis(analysisUrl, prev, activeAIConfig);
+        if (analysisUrl && activeAIConfig) {
+          void saveAnalysis(analysisUrl, prev, activeAIConfig).then(rememberSavedEntry);
+        }
         return prev;
       });
     } catch (err) {
@@ -352,7 +408,7 @@ function App() {
     } finally {
       setReqLoading(false);
     }
-  }, [state.mrData, activeAIConfig, issueData, reqLoading, updateState, analysisUrl]);
+  }, [state.mrData, activeAIConfig, issueData, reqLoading, updateState, analysisUrl, rememberSavedEntry]);
 
   const handleTriggerMRDescription = useCallback(async () => {
     if (!state.mrData || !activeAIConfig || mrDescLoading) return;
@@ -362,7 +418,9 @@ function App() {
       updateState({ mrDescriptionReview });
       toast.success("MR description review complete!");
       setState((prev) => {
-        if (analysisUrl && activeAIConfig) saveAnalysis(analysisUrl, prev, activeAIConfig);
+        if (analysisUrl && activeAIConfig) {
+          void saveAnalysis(analysisUrl, prev, activeAIConfig).then(rememberSavedEntry);
+        }
         return prev;
       });
     } catch (err) {
@@ -371,11 +429,20 @@ function App() {
     } finally {
       setMrDescLoading(false);
     }
-  }, [state.mrData, activeAIConfig, issueData, mrDescLoading, updateState, analysisUrl]);
+  }, [state.mrData, activeAIConfig, issueData, mrDescLoading, updateState, analysisUrl, rememberSavedEntry]);
 
   // Show input form
   if (state.step === "idle") {
-    return <InputForm onSubmit={handleAnalyze} isLoading={false} theme={theme} onThemeChange={setTheme} onLoadHistory={handleLoadHistory} />;
+    return (
+      <InputForm
+        onSubmit={handleAnalyze}
+        isLoading={false}
+        theme={theme}
+        onThemeChange={setTheme}
+        onLoadHistory={handleLoadHistory}
+        onClearHistory={handleClearAllHistory}
+      />
+    );
   }
 
   // Show analysis in progress or error
@@ -410,6 +477,10 @@ function App() {
           onSelectedFileChange={handleSelectedFileChange}
           loadedFromHistory={loadedFromHistory}
           loadedHistoryTimestamp={loadedHistoryTimestamp}
+          onDeleteCurrentReview={handleDeleteCurrentReview}
+          canDeleteCurrentReview={!!currentHistoryEntryId}
+          onDeleteCurrentMrHistory={handleDeleteCurrentMrHistory}
+          canDeleteCurrentMrHistory={!!analysisUrl}
         />
       );
     }
@@ -456,6 +527,10 @@ function App() {
       onSelectedFileChange={handleSelectedFileChange}
       loadedFromHistory={loadedFromHistory}
       loadedHistoryTimestamp={loadedHistoryTimestamp}
+      onDeleteCurrentReview={handleDeleteCurrentReview}
+      canDeleteCurrentReview={!!currentHistoryEntryId}
+      onDeleteCurrentMrHistory={handleDeleteCurrentMrHistory}
+      canDeleteCurrentMrHistory={!!analysisUrl}
     />
   );
 }

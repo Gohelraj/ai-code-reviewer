@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import toast from "react-hot-toast";
-import { GitPullRequest, Search, ArrowLeft, ExternalLink, Cpu, Play, ListChecks, FileEdit, X, Clock, ChevronDown, RefreshCw } from "lucide-react";
+import { GitPullRequest, Search, ArrowLeft, ExternalLink, Cpu, Play, ListChecks, FileEdit, X, Clock, ChevronDown, RefreshCw, Trash2 } from "lucide-react";
 import type { AnalysisState } from "../types";
 import { ChangeSummaryPanel } from "./ChangeSummaryPanel";
 import { ExecutionFlowPanel } from "./ExecutionFlowPanel";
@@ -50,9 +50,13 @@ interface ResultsDashboardProps {
   onSelectedFileChange?: (selectedFile?: string) => void;
   loadedFromHistory?: boolean;
   loadedHistoryTimestamp?: number | null;
+  onDeleteCurrentReview?: () => Promise<void> | void;
+  canDeleteCurrentReview?: boolean;
+  onDeleteCurrentMrHistory?: () => Promise<void> | void;
+  canDeleteCurrentMrHistory?: boolean;
 }
 
-export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, flowLoading, reqLoading, mrDescLoading, onTriggerFlow, onRefresh, onTriggerReview, onTriggerRequirements, onTriggerMRDescription, prUrl, prToken, onNotesChange, onTokenChange, onLoadHistory, onAIConfigChange, onReviewChatChange, onSelectedIssueChange, onSelectedFileChange, loadedFromHistory = false, loadedHistoryTimestamp = null }: ResultsDashboardProps) {
+export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, flowLoading, reqLoading, mrDescLoading, onTriggerFlow, onRefresh, onTriggerReview, onTriggerRequirements, onTriggerMRDescription, prUrl, prToken, onNotesChange, onTokenChange, onLoadHistory, onAIConfigChange, onReviewChatChange, onSelectedIssueChange, onSelectedFileChange, loadedFromHistory = false, loadedHistoryTimestamp = null, onDeleteCurrentReview, canDeleteCurrentReview = false, onDeleteCurrentMrHistory, canDeleteCurrentMrHistory = false }: ResultsDashboardProps) {
   const { mrData, summary, executionFlow, codeReview, activeTab, requirementsCheck, mrDescriptionReview } = state;
   const [reviewRunMode, setReviewRunMode] = useState<ReviewMode>(aiConfig?.reviewMode ?? "deep");
   const modelLabel = aiConfig?.provider === "openrouter" && aiConfig.apiKey
@@ -241,6 +245,36 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
               <RefreshCw size={11} className="text-muted-foreground" />
               <span className="font-medium text-foreground">Refresh MR</span>
             </button>
+            {onDeleteCurrentReview && (
+              <button
+                onClick={async () => {
+                  if (!canDeleteCurrentReview) return;
+                  if (!window.confirm("Delete this saved review permanently? This cannot be undone.")) return;
+                  await onDeleteCurrentReview();
+                }}
+                disabled={!canDeleteCurrentReview}
+                className="hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Delete the currently open saved review"
+              >
+                <Trash2 size={11} className="text-muted-foreground" />
+                <span className="font-medium text-foreground">Delete Review</span>
+              </button>
+            )}
+            {onDeleteCurrentMrHistory && (
+              <button
+                onClick={async () => {
+                  if (!canDeleteCurrentMrHistory) return;
+                  if (!window.confirm("Delete all saved reviews for this MR or PR? This cannot be undone.")) return;
+                  await onDeleteCurrentMrHistory();
+                }}
+                disabled={!canDeleteCurrentMrHistory}
+                className="hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Delete all saved review history for the current MR or PR"
+              >
+                <Trash2 size={11} className="text-muted-foreground" />
+                <span className="font-medium text-foreground">Delete MR History</span>
+              </button>
+            )}
             <ThemeToggle theme={theme} onThemeChange={onThemeChange} />
             <button
               onClick={onReset}
