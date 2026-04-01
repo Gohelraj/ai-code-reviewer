@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import type { CodeReview, ReviewIssue, MRData, RequirementsCheck, MRDescriptionReview, ReviewChatMessage } from "../types";
-import { postReviewComment, postInlineComments, buildIssueMarkdown, type InlinePostResult } from "../lib/github-comment";
+import { postReviewComment, postInlineComments, fetchPostedIssueIds, buildIssueMarkdown, type InlinePostResult } from "../lib/github-comment";
 import ConfirmModal from "./ConfirmModal";
 import type { AIConfig, PostingMode, ReviewMode } from "./AISettings";
 import { ReviewModePicker } from "./ReviewModePicker";
@@ -678,6 +678,20 @@ export function CodeReviewPanel({
   const hasToken = !!effectiveToken;
   const canPost = !!prUrl && hasToken;
   const [postedIssues, setPostedIssues] = useState<Set<string>>(new Set());
+
+  // Detect issues already posted on the MR/PR
+  useEffect(() => {
+    if (!prUrl || !effectiveToken || review.issues.length === 0) return;
+    let cancelled = false;
+    fetchPostedIssueIds({ url: prUrl, token: effectiveToken, issues: review.issues }).then((ids) => {
+      if (!cancelled && ids.size > 0) setPostedIssues((prev) => {
+        const merged = new Set(prev);
+        ids.forEach((id) => merged.add(id));
+        return merged;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [prUrl, effectiveToken, review.issues]);
   const [editedComments, setEditedComments] = useState<Record<string, string>>({});
   const [editModal, setEditModal] = useState<{ issues: ReviewIssue[]; bodies: Record<string, string> } | null>(null);
   const [dismissedIssues, setDismissedIssues] = useState<Set<string>>(new Set());

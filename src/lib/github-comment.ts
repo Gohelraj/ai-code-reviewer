@@ -288,3 +288,80 @@ export async function postInlineComments({
 
   return result;
 }
+
+/**
+ * Fetch existing MR/PR comments and match them against review issues
+ * to determine which issues have already been posted.
+ * Returns a Set of issue IDs that are already posted.
+ */
+export async function fetchPostedIssueIds({
+  url,
+  token,
+  issues,
+}: {
+  url: string;
+  token: string;
+  issues: ReviewIssue[];
+}): Promise<Set<string>> {
+  const posted = new Set<string>();
+  if (!token || issues.length === 0) return posted;
+
+  try {
+    const existingBodies: string[] = [];
+    const gitlab = parseGitLabUrl(url);
+    const github = parseGitHubUrl(url);
+
+    if (gitlab) {
+      const encodedPath = encodeURIComponent(gitlab.projectPath);
+      const [notesRes, discussionsRes] = await Promise.all([
+        fetch(`/api/gitlab/api/v4/projects/${encodedPath}/merge_requests/${gitlab.mrIid}/notes?per_page=100&sort=desc`, {
+          headers: { "PRIVATE-TOKEN": token },
+        }),
+        fetch(`/api/gitlab/api/v4/projects/${encodedPath}/merge_requests/${gitlab.mrIid}/discussions?per_page=100`, {
+          headers: { "PRIVATE-TOKEN": token },
+        }),
+      ]);
+
+      if (notesRes.ok) {
+        const notes: { body: string }[] = await notesRes.json();
+        for (const n of notes) existingBodies.push(n.body);
+      }
+      if (discussionsRes.ok) {
+        const discussions: { notes: { body: string }[] }[] = await discussionsRes.json();
+        for (const d of discussions) {
+          for (const n of d.notes) existingBodies.push(n.body);
+        }
+      }
+    } else if (github) {
+      const [reviewCommentsRes, issueCommentsRes] = await Promise.all([
+        fetch(`https://api.github.com/repos/${github.owner}/${github.repo}/pulls/${github.number}/comments?per_page=100`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+        }),
+        fetch(`https://api.github.com/repos/${github.owner}/${github.repo}/issues/${github.number}/comments?per_page=100`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+        }),
+      ]);
+
+      if (reviewCommentsRes.ok) {
+        const comments: { body: string }[] = await reviewCommentsRes.json();
+        for (const c of comments) existingBodies.push(c.body);
+      }
+      if (issueCommentsRes.ok) {
+        const comments: { body: string }[] = await issueCommentsRes.json();
+        for (const c of comments) existingBodies.push(c.body);
+      }
+    }
+
+    // Match by checking if the issue title appears in any existing comment
+    for (const issue of issues) {
+      const titlePattern = issue.title.toLowerCase();
+      if (existingBodies.some((body) => body.toLowerCase().includes(titlePattern))) {
+        posted.add(issue.id);
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to fetch existing comments for posted-issue detection:", err);
+  }
+
+  return posted;
+}
