@@ -16,6 +16,15 @@ const issue: ReviewIssue = {
   suggestedFix: "if (!response) return null;",
   impact: "Users see a runtime crash.",
   fixable: true,
+  evidence: [
+    {
+      type: "diff",
+      summary: "response.value is accessed before the null guard.",
+      file: "src/api.ts",
+      lineHint: "Line 18",
+      snippet: "return response.value;",
+    },
+  ],
 };
 
 describe("github-comment helpers", () => {
@@ -30,11 +39,12 @@ describe("github-comment helpers", () => {
     expect(parseLineNumber("no line")).toBeNull();
   });
 
-  it("builds markdown with code and suggestion blocks", () => {
+  it("builds concise markdown with code and suggestion blocks", () => {
     const markdown = buildIssueMarkdown(issue);
-    expect(markdown).toContain("**[WARNING] Fix the null branch**");
+    expect(markdown).toContain("**Fix the null branch**");
     expect(markdown).toContain("```suggestion");
-    expect(markdown).toContain("Users see a runtime crash.");
+    expect(markdown).not.toContain("Impact");
+    expect(markdown).not.toContain("Evidence");
   });
 
   it("posts general GitHub comments when general mode is requested", async () => {

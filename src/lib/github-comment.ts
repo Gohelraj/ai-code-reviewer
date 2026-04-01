@@ -43,10 +43,9 @@ export function parseLineNumber(lineHint: string): number | null {
 
 /** Build markdown body for a single issue */
 export function buildIssueMarkdown(issue: ReviewIssue): string {
-  const sevEmoji = issue.severity === "critical" ? "🔴" : issue.severity === "warning" ? "🟡" : "🔵";
   const lines: string[] = [];
 
-  lines.push(`${sevEmoji} **[${issue.severity.toUpperCase()}] ${issue.title}**`);
+  lines.push(`**${issue.title}**`);
   lines.push("");
   lines.push(issue.description);
 
@@ -64,11 +63,6 @@ export function buildIssueMarkdown(issue: ReviewIssue): string {
     lines.push("```suggestion");
     lines.push(issue.suggestedFix.trim());
     lines.push("```");
-  }
-
-  if (issue.impact) {
-    lines.push("");
-    lines.push(`> **Impact:** ${issue.impact}`);
   }
 
 //   lines.push("");

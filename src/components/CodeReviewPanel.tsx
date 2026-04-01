@@ -185,47 +185,7 @@ function MergeReadinessPanel({
 
 /** Build markdown for a single issue */
 function buildSingleIssueMarkdown(issue: ReviewIssue): string {
-  const sevEmoji = issue.severity === "critical" ? "🔴" : issue.severity === "warning" ? "🟡" : "🔵";
-  const lines: string[] = [];
-  lines.push(`#### ${sevEmoji} [${issue.severity.toUpperCase()}] ${issue.title}`);
-  lines.push(``);
-  if (issue.file) {
-    lines.push(`📁 \`${issue.file}\`${issue.lineHint ? ` · ${issue.lineHint}` : ""}`);
-    lines.push(``);
-  }
-  lines.push(issue.description);
-  lines.push(``);
-  lines.push(`**Confidence:** ${issue.confidence}`);
-  lines.push(`**Verification:** ${issue.verificationStatus ?? "uncertain"}`);
-  lines.push(``);
-  lines.push(`**Rationale:** ${issue.rationale}`);
-  lines.push(``);
-  if (issue.evidence && issue.evidence.length > 0) {
-    lines.push(`**Evidence:**`);
-    for (const evidence of issue.evidence) {
-      lines.push(`- [${evidence.type}] ${evidence.summary}${evidence.file ? ` (${evidence.file}${evidence.lineHint ? ` · ${evidence.lineHint}` : ""})` : ""}`);
-    }
-    lines.push(``);
-  }
-  if (issue.currentCode) {
-    lines.push(`**Problematic Code:**`);
-    lines.push("```");
-    lines.push(issue.currentCode.trim());
-    lines.push("```");
-    lines.push(``);
-  }
-  if (issue.suggestedFix) {
-    lines.push(`**Suggested Fix:**`);
-    lines.push("```");
-    lines.push(issue.suggestedFix.trim());
-    lines.push("```");
-    lines.push(``);
-  }
-  if (issue.impact) {
-    lines.push(`> **Impact:** ${issue.impact}`);
-    lines.push(``);
-  }
-  return lines.join("\n");
+  return buildIssueMarkdown(issue);
 }
 
 function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismiss, onRestore, posted, editedComment, onEditComment, onResetComment, highlighted, onFocusIssue, generatedFix, fixLoading, onGenerateFix }: {
