@@ -65,6 +65,16 @@ const review: CodeReview = {
       suggestedFix: "if (!req.user) throw new Error('Unauthorized');",
       impact: "Sensitive data can be exposed.",
       fixable: true,
+      verificationStatus: "verified",
+      evidence: [
+        {
+          type: "diff",
+          summary: "The new handler path returns before checking req.user.",
+          file: "src/auth.ts",
+          lineHint: "Line 12",
+          snippet: "return handler(req);",
+        },
+      ],
     },
   ],
   architectureObservations: [],
@@ -72,6 +82,15 @@ const review: CodeReview = {
   performanceConsiderations: ["No meaningful performance regression expected."],
   testingAssessment: "Auth coverage should include denial cases.",
   testGapSummary: "Production code changed but no test files were modified. Reviewers should verify whether test coverage is missing or intentionally unchanged.",
+  verificationSummary: "The auth finding is directly supported by the changed route handler and related context.",
+  contextInsights: [
+    {
+      file: "src/routes.ts",
+      reason: "Imported by src/auth.ts and still calls the unguarded handler.",
+      source: "import",
+      excerpt: "router.get('/account', authHandler);",
+    },
+  ],
   riskHotspots: [
     {
       file: "src/auth.ts",
@@ -129,8 +148,12 @@ describe("CodeReviewPanel", () => {
     );
 
     expect(await screen.findByText("HIGH CONF")).toBeInTheDocument();
+    expect(screen.getByText("VERIFIED")).toBeInTheDocument();
     expect(screen.getByText("Auth checks are missing on a public entry point.")).toBeInTheDocument();
     expect(screen.getByText("Test Gap Signal")).toBeInTheDocument();
+    expect(screen.getByText("Verification Summary")).toBeInTheDocument();
+    expect(screen.getByText("Related Context Retrieved")).toBeInTheDocument();
+    expect(screen.getByText("The new handler path returns before checking req.user.")).toBeInTheDocument();
     expect(screen.getByText("Risk Hotspots")).toBeInTheDocument();
     expect(screen.getByText("Suggested Reviewers")).toBeInTheDocument();
     expect(screen.getByText("Merge Readiness Gates")).toBeInTheDocument();

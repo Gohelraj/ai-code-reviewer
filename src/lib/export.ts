@@ -105,10 +105,25 @@ export function exportAsMarkdown(state: AnalysisState): string {
       for (const i of codeReview.issues) {
         lines.push(`#### [${i.severity.toUpperCase()}] ${i.title}`);
         if (i.file) lines.push(`**File:** ${i.file}${i.lineHint ? ` · ${i.lineHint}` : ""}`);
+        lines.push(`**Confidence:** ${i.confidence}`);
+        lines.push(`**Verification:** ${i.verificationStatus ?? "uncertain"}`);
         lines.push(``);
         lines.push(i.description);
         lines.push(``);
         lines.push(`**Rationale:** ${i.rationale}`);
+        if (i.evidence && i.evidence.length > 0) {
+          lines.push(``);
+          lines.push(`**Evidence:**`);
+          for (const evidence of i.evidence) {
+            const location = evidence.file ? ` (${evidence.file}${evidence.lineHint ? ` · ${evidence.lineHint}` : ""})` : "";
+            lines.push(`- [${evidence.type}] ${evidence.summary}${location}`);
+            if (evidence.snippet) {
+              lines.push("```");
+              lines.push(evidence.snippet);
+              lines.push("```");
+            }
+          }
+        }
         if (i.currentCode) {
           lines.push(``);
           lines.push(`**Problematic Code:**`);
@@ -134,6 +149,25 @@ export function exportAsMarkdown(state: AnalysisState): string {
     if (codeReview.testGapSummary) {
       lines.push(`### Test Gap Summary`);
       lines.push(codeReview.testGapSummary);
+      lines.push(``);
+    }
+
+    if (codeReview.verificationSummary) {
+      lines.push(`### Verification Summary`);
+      lines.push(codeReview.verificationSummary);
+      lines.push(``);
+    }
+
+    if (codeReview.contextInsights && codeReview.contextInsights.length > 0) {
+      lines.push(`### Related Context Insights`);
+      for (const insight of codeReview.contextInsights) {
+        lines.push(`- **${insight.file}** [${insight.source}] — ${insight.reason}`);
+        if (insight.excerpt) {
+          lines.push("```");
+          lines.push(insight.excerpt);
+          lines.push("```");
+        }
+      }
       lines.push(``);
     }
 

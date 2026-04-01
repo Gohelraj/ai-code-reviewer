@@ -136,6 +136,19 @@ function ConfidenceBadge({ confidence }: { confidence: ReviewIssue["confidence"]
   );
 }
 
+function VerificationBadge({ status }: { status?: ReviewIssue["verificationStatus"] }) {
+  const resolved = status === "verified" ? "verified" : "uncertain";
+  const styles = resolved === "verified"
+    ? "bg-accent/10 text-accent border-accent/20"
+    : "bg-muted text-muted-foreground border-border";
+
+  return (
+    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border ${styles}`}>
+      {resolved === "verified" ? "VERIFIED" : "PARTIAL"}
+    </span>
+  );
+}
+
 function MergeReadinessPanel({
   review,
   requirementsCheck,
@@ -182,8 +195,18 @@ function buildSingleIssueMarkdown(issue: ReviewIssue): string {
   }
   lines.push(issue.description);
   lines.push(``);
+  lines.push(`**Confidence:** ${issue.confidence}`);
+  lines.push(`**Verification:** ${issue.verificationStatus ?? "uncertain"}`);
+  lines.push(``);
   lines.push(`**Rationale:** ${issue.rationale}`);
   lines.push(``);
+  if (issue.evidence && issue.evidence.length > 0) {
+    lines.push(`**Evidence:**`);
+    for (const evidence of issue.evidence) {
+      lines.push(`- [${evidence.type}] ${evidence.summary}${evidence.file ? ` (${evidence.file}${evidence.lineHint ? ` · ${evidence.lineHint}` : ""})` : ""}`);
+    }
+    lines.push(``);
+  }
   if (issue.currentCode) {
     lines.push(`**Problematic Code:**`);
     lines.push("```");
@@ -281,6 +304,7 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
               {issue.category}
             </span>
             <ConfidenceBadge confidence={issue.confidence} />
+            <VerificationBadge status={issue.verificationStatus} />
             {dismissed && (
               <span className="text-xs font-medium text-muted-foreground px-2 py-0.5 rounded-md bg-muted border border-border line-through">
                 Dismissed
@@ -376,6 +400,34 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
                 <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Rationale</p>
                 <p className="text-sm text-foreground leading-relaxed">{issue.rationale}</p>
               </div>
+
+              {issue.evidence && issue.evidence.length > 0 && (
+                <div className="rounded-xl border border-border bg-card/70 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Evidence</p>
+                  <div className="space-y-3">
+                    {issue.evidence.map((evidence, evidenceIndex) => (
+                      <div key={`${issue.id}-evidence-${evidenceIndex}`} className="rounded-lg border border-border bg-secondary/40 px-3 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-foreground bg-background border border-border px-2 py-0.5 rounded-md">
+                            {evidence.type.replace(/_/g, " ")}
+                          </span>
+                          {evidence.file && (
+                            <span className="text-[11px] font-mono text-muted-foreground">
+                              {evidence.file}{evidence.lineHint ? ` · ${evidence.lineHint}` : ""}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-foreground mt-2 leading-relaxed">{evidence.summary}</p>
+                        {evidence.snippet && (
+                          <pre className="mt-3 text-xs font-mono rounded-lg border border-border bg-background p-3 overflow-x-auto whitespace-pre-wrap break-words text-foreground">
+                            <code>{evidence.snippet}</code>
+                          </pre>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {issue.currentCode && (
                 <CodeBlock code={issue.currentCode} label="Problematic Code" variant="destructive" />
@@ -791,6 +843,19 @@ export function CodeReviewPanel({
         lines.push(`**Rationale:** ${issue.rationale}`);
         lines.push(``);
 
+        if (issue.evidence && issue.evidence.length > 0) {
+          lines.push(`**Evidence:**`);
+          for (const evidence of issue.evidence) {
+            lines.push(`- [${evidence.type}] ${evidence.summary}${evidence.file ? ` (${evidence.file}${evidence.lineHint ? ` · ${evidence.lineHint}` : ""})` : ""}`);
+            if (evidence.snippet) {
+              lines.push('```');
+              lines.push(evidence.snippet);
+              lines.push('```');
+            }
+          }
+          lines.push(``);
+        }
+
         if (issue.currentCode) {
           lines.push(`**Problematic Code:**`);
           lines.push('```');
@@ -823,6 +888,27 @@ export function CodeReviewPanel({
       lines.push(``);
       for (const s of review.strengths) {
         lines.push(`- ${s}`);
+      }
+      lines.push(``);
+    }
+
+    if (review.verificationSummary) {
+      lines.push(`### ✅ Verification Summary`);
+      lines.push(``);
+      lines.push(review.verificationSummary);
+      lines.push(``);
+    }
+
+    if (review.contextInsights && review.contextInsights.length > 0) {
+      lines.push(`### 🧭 Related Context Insights`);
+      lines.push(``);
+      for (const insight of review.contextInsights) {
+        lines.push(`- **${insight.file}** [${insight.source}] — ${insight.reason}`);
+        if (insight.excerpt) {
+          lines.push('```');
+          lines.push(insight.excerpt);
+          lines.push('```');
+        }
       }
       lines.push(``);
     }
@@ -1228,6 +1314,41 @@ export function CodeReviewPanel({
             <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
               <h3 className="text-sm font-semibold text-foreground mb-1">Test Gap Signal</h3>
               <p className="text-sm text-muted-foreground leading-relaxed">{review.testGapSummary}</p>
+            </div>
+          )}
+
+          {review.verificationSummary && (
+            <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
+              <h3 className="text-sm font-semibold text-foreground mb-1">Verification Summary</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">{review.verificationSummary}</p>
+            </div>
+          )}
+
+          {review.contextInsights && review.contextInsights.length > 0 && (
+            <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
+              <h3 className="text-sm font-semibold text-foreground mb-3">Related Context Retrieved</h3>
+              <div className="space-y-2">
+                {review.contextInsights.map((insight) => (
+                  <button
+                    key={`${insight.file}-${insight.source}-${insight.reason}`}
+                    onClick={() => onSelectedFileChange?.(insight.file)}
+                    className="w-full text-left rounded-xl border border-border bg-card px-4 py-3 hover:bg-secondary/40 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-mono text-foreground truncate">{insight.file}</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {insight.source.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{insight.reason}</p>
+                    {insight.excerpt && (
+                      <pre className="mt-3 text-xs font-mono rounded-lg border border-border bg-background p-3 overflow-x-auto whitespace-pre-wrap break-words text-foreground">
+                        <code>{insight.excerpt}</code>
+                      </pre>
+                    )}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 

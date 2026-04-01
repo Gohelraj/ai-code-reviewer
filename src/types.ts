@@ -92,6 +92,14 @@ export interface ReviewIssue {
   suggestedFix: string;
   impact?: string;
   fixable?: boolean;
+  verificationStatus?: "verified" | "uncertain";
+  evidence?: Array<{
+    type: "diff" | "full_file" | "related_file" | "repo_memory" | "test" | "contract";
+    summary: string;
+    file?: string;
+    lineHint?: string;
+    snippet?: string;
+  }>;
 }
 
 export interface ArchitectureObservation {
@@ -103,6 +111,22 @@ export interface ArchitectureObservation {
 export interface ReviewerSuggestion {
   reviewer: string;
   files: string[];
+}
+
+export interface ReviewContextInsight {
+  file: string;
+  reason: string;
+  source: "import" | "test" | "sibling" | "symbol" | "contract";
+  excerpt?: string;
+}
+
+export interface RepoReviewMemory {
+  purpose: string[];
+  architecture: string[];
+  domainRules: string[];
+  reviewPriorities: string[];
+  intentionalPatterns: string[];
+  avoidFlagging: string[];
 }
 
 export interface CodeReview {
@@ -117,8 +141,10 @@ export interface CodeReview {
   testingAssessment: string;
   testGapSummary: string;
   riskHotspots: Array<{ file: string; score: number; reasons: string[] }>;
+  contextInsights?: ReviewContextInsight[];
   reviewerSuggestions?: ReviewerSuggestion[];
   reviewDiff?: { addedIssueIds: string[]; removedIssueIds: string[]; changedSeverityIds: string[]; scoreDelta: number };
+  verificationSummary?: string;
   mergeReadiness: string;
 }
 

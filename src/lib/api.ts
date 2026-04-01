@@ -1,8 +1,9 @@
-import type { MRData, ChangeSummary, ExecutionFlow, CodeReview, RequirementsCheck, MRDescriptionReview, FileDiff, PRInfo } from "../types";
+import type { MRData, ChangeSummary, ExecutionFlow, CodeReview, RequirementsCheck, MRDescriptionReview, FileDiff, PRInfo, RepoReviewMemory, ReviewContextInsight, ReviewIssue } from "../types";
 import { DEFAULT_PRIMARY_MODEL, normalizeOpenRouterModel } from "../components/AISettings";
 import type { AIConfig, ReviewMode } from "../components/AISettings";
 import { computeRiskHotspots, computeTestGapSummary, getReviewContextPlan } from "./review-utils";
 import { buildReviewerSuggestions, parseCodeowners } from "./codeowners";
+import { formatRepoReviewMemory, hasRepoReviewMemory, parseRepoReviewMemory, summarizeRepoReviewMemory } from "./repo-memory";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -373,8 +374,24 @@ const REVIEW_SCHEMA: Record<string, unknown> = {
           suggestedFix: { type: "string" },
           impact: { type: "string" },
           fixable: { type: "boolean" },
+          verificationStatus: { type: "string", enum: ["verified", "uncertain"] },
+          evidence: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                type: { type: "string", enum: ["diff", "full_file", "related_file", "repo_memory", "test", "contract"] },
+                summary: { type: "string" },
+                file: { type: "string" },
+                lineHint: { type: "string" },
+                snippet: { type: "string" },
+              },
+              required: ["type", "summary", "file", "lineHint", "snippet"],
+              additionalProperties: false,
+            },
+          },
         },
-        required: ["id", "severity", "category", "title", "description", "confidence", "rationale", "file", "lineHint", "currentCode", "suggestedFix", "impact", "fixable"],
+        required: ["id", "severity", "category", "title", "description", "confidence", "rationale", "file", "lineHint", "currentCode", "suggestedFix", "impact", "fixable", "verificationStatus", "evidence"],
         additionalProperties: false,
       },
     },
@@ -408,9 +425,50 @@ const REVIEW_SCHEMA: Record<string, unknown> = {
         additionalProperties: false,
       },
     },
+    contextInsights: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          file: { type: "string" },
+          reason: { type: "string" },
+          source: { type: "string", enum: ["import", "test", "sibling", "symbol", "contract"] },
+          excerpt: { type: "string" },
+        },
+        required: ["file", "reason", "source", "excerpt"],
+        additionalProperties: false,
+      },
+    },
+    verificationSummary: { type: "string" },
     mergeReadiness: { type: "string" },
   },
-  required: ["overallVerdict", "overallScore", "executiveSummary", "strengths", "issues", "architectureObservations", "securityConsiderations", "performanceConsiderations", "testingAssessment", "testGapSummary", "riskHotspots", "mergeReadiness"],
+  required: ["overallVerdict", "overallScore", "executiveSummary", "strengths", "issues", "architectureObservations", "securityConsiderations", "performanceConsiderations", "testingAssessment", "testGapSummary", "riskHotspots", "contextInsights", "verificationSummary", "mergeReadiness"],
+  additionalProperties: false,
+};
+
+const REVIEW_VERIFICATION_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    verificationSummary: { type: "string" },
+    issues: REVIEW_SCHEMA.properties && typeof REVIEW_SCHEMA.properties === "object"
+      ? (REVIEW_SCHEMA.properties as Record<string, unknown>).issues
+      : { type: "array", items: { type: "object" } },
+  },
+  required: ["verificationSummary", "issues"],
+  additionalProperties: false,
+};
+
+const REPO_MEMORY_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    purpose: { type: "array", items: { type: "string" } },
+    architecture: { type: "array", items: { type: "string" } },
+    domainRules: { type: "array", items: { type: "string" } },
+    reviewPriorities: { type: "array", items: { type: "string" } },
+    intentionalPatterns: { type: "array", items: { type: "string" } },
+    avoidFlagging: { type: "array", items: { type: "string" } },
+  },
+  required: ["purpose", "architecture", "domainRules", "reviewPriorities", "intentionalPatterns", "avoidFlagging"],
   additionalProperties: false,
 };
 
@@ -485,6 +543,292 @@ function getRelevantFileContext(mrData: MRData, targetFile?: string, reviewMode:
     ? mrData.files.filter((file) => file.filename === targetFile)
     : mrData.files;
   return buildContextAwareDiff(files.length > 0 ? files : mrData.files, reviewMode);
+}
+
+function dedupe<T>(values: T[]): T[] {
+  return Array.from(new Set(values));
+}
+
+function normalizePath(path: string): string {
+  const parts = path.replace(/\\/g, "/").split("/");
+  const normalized: string[] = [];
+  for (const part of parts) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      normalized.pop();
+      continue;
+    }
+    normalized.push(part);
+  }
+  return normalized.join("/");
+}
+
+function stripExtension(path: string): string {
+  return path.replace(/\.[^.]+$/, "");
+}
+
+function getDirectory(path: string): string {
+  const index = path.lastIndexOf("/");
+  return index === -1 ? "" : path.slice(0, index);
+}
+
+function joinPath(baseDir: string, path: string): string {
+  return normalizePath(baseDir ? `${baseDir}/${path}` : path);
+}
+
+function resolveRelativeImportCandidates(fromFile: string, importPath: string): string[] {
+  if (!importPath.startsWith(".")) {
+    return [];
+  }
+
+  const baseDir = getDirectory(fromFile);
+  const baseTarget = joinPath(baseDir, importPath);
+  const extensions = ["", ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".json", ".py", ".go", ".java", ".rb"];
+
+  const candidates = extensions.map((extension) => `${baseTarget}${extension}`);
+  return dedupe([
+    ...candidates,
+    ...extensions.filter(Boolean).map((extension) => `${baseTarget}/index${extension}`),
+  ]);
+}
+
+function extractRelativeImports(content: string): string[] {
+  const matches = content.matchAll(/(?:from\s+|require\(|import\()\s*["']([^"']+)["']/g);
+  const imports: string[] = [];
+  for (const match of matches) {
+    if (match[1]?.startsWith(".")) {
+      imports.push(match[1]);
+    }
+  }
+  return dedupe(imports);
+}
+
+function extractInterestingSymbols(text: string): string[] {
+  const symbols = new Set<string>();
+  const regexes = [
+    /\b(?:function|class|interface|type|enum|const|let)\s+([A-Za-z_][A-Za-z0-9_]*)/g,
+    /\b([A-Z][A-Za-z0-9_]{2,})\b/g,
+    /\b([a-z][A-Za-z0-9_]{3,})\s*\(/g,
+  ];
+
+  for (const regex of regexes) {
+    for (const match of text.matchAll(regex)) {
+      const symbol = match[1];
+      if (symbol && symbol.length > 2 && !["const", "return", "throw", "import", "export"].includes(symbol)) {
+        symbols.add(symbol);
+      }
+    }
+  }
+
+  return Array.from(symbols).slice(0, 10);
+}
+
+function findSnippetAroundSymbol(content: string, symbols: string[], fallbackLines = 18): string {
+  const lines = content.split(/\r?\n/);
+  if (lines.length === 0) return "";
+
+  for (const symbol of symbols) {
+    const index = lines.findIndex((line) => line.includes(symbol));
+    if (index !== -1) {
+      const start = Math.max(0, index - 6);
+      const end = Math.min(lines.length, index + 8);
+      return lines.slice(start, end).join("\n");
+    }
+  }
+
+  return lines.slice(0, Math.min(lines.length, fallbackLines)).join("\n");
+}
+
+function guessRelatedTestPaths(filename: string): string[] {
+  if (/(^|\/)(__tests__|tests?|specs?)(\/|$)|(\.|-)(test|spec)\.[^.]+$/i.test(filename)) {
+    return [];
+  }
+
+  const dir = getDirectory(filename);
+  const baseName = stripExtension(filename.split("/").pop() ?? filename);
+  const ext = filename.match(/(\.[^.]+)$/)?.[1] ?? ".ts";
+
+  return dedupe([
+    joinPath(dir, `${baseName}.test${ext}`),
+    joinPath(dir, `${baseName}.spec${ext}`),
+    joinPath(dir, `__tests__/${baseName}.test${ext}`),
+    joinPath(dir, `__tests__/${baseName}.spec${ext}`),
+    joinPath(dir, `tests/${baseName}.test${ext}`),
+  ]);
+}
+
+function guessContractPaths(filename: string): string[] {
+  const dir = getDirectory(filename);
+  const baseName = stripExtension(filename.split("/").pop() ?? filename);
+  return dedupe([
+    joinPath(dir, "types.ts"),
+    joinPath(dir, "schema.ts"),
+    joinPath(dir, `${baseName}.types.ts`),
+    joinPath(dir, `${baseName}.schema.ts`),
+  ]);
+}
+
+async function fetchRepositoryFileContent(mrData: MRData, path: string, token?: string): Promise<string | null> {
+  if (mrData.platform === "github") {
+    const parsed = parseGitHubUrl(mrData.pr.url);
+    if (!parsed) return null;
+    const headers: Record<string, string> = {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "AI-Code-Reviewer/1.0",
+    };
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+    const ref = encodeURIComponent(mrData.pr.headBranch);
+    const res = await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents/${encodedPath}?ref=${ref}`, { headers });
+    if (!res.ok) return null;
+    const data = await res.json() as { content?: string; encoding?: string };
+    if (data.encoding !== "base64" || !data.content) return null;
+    return atob(data.content.replace(/\n/g, ""));
+  }
+
+  const parsed = parseGitLabUrl(mrData.pr.url);
+  if (!parsed) return null;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["PRIVATE-TOKEN"] = token;
+
+  const encodedProject = encodeURIComponent(parsed.projectPath);
+  const encodedFile = encodeURIComponent(path);
+  const ref = encodeURIComponent(mrData.pr.headBranch);
+  const res = await fetch(`/api/gitlab/api/v4/projects/${encodedProject}/repository/files/${encodedFile}/raw?ref=${ref}`, { headers });
+  if (!res.ok) return null;
+  return res.text();
+}
+
+function mergeHydratedFile(mrData: MRData, filename: string, content: string | null): MRData {
+  if (!content) {
+    return mrData;
+  }
+
+  const existing = mrData.files.find((file) => file.filename === filename);
+  if (existing) {
+    return {
+      ...mrData,
+      files: mrData.files.map((file) => file.filename === filename ? { ...file, fullContent: file.fullContent ?? content } : file),
+    };
+  }
+
+  return {
+    ...mrData,
+    files: [
+      ...mrData.files,
+      {
+        filename,
+        status: "context",
+        additions: 0,
+        deletions: 0,
+        changes: 0,
+        patch: null,
+        blobUrl: null,
+        fullContent: content,
+      },
+    ],
+  };
+}
+
+async function buildRelatedContextInsights(mrData: MRData, reviewMode: ReviewMode, token?: string): Promise<{
+  hydrated: MRData;
+  insights: ReviewContextInsight[];
+}> {
+  const plan = getReviewContextPlan(mrData.files, reviewMode);
+  const selectedFiles = plan.selectedFiles
+    .map((filename) => mrData.files.find((file) => file.filename === filename))
+    .filter((file): file is FileDiff => !!file);
+
+  const candidates = new Map<string, ReviewContextInsight>();
+  let hydrated = mrData;
+
+  for (const file of selectedFiles) {
+    const sourceText = [file.patch ?? "", file.fullContent ?? ""].filter(Boolean).join("\n");
+    const symbols = extractInterestingSymbols(sourceText);
+    const imports = file.fullContent ? extractRelativeImports(file.fullContent) : [];
+
+    for (const importPath of imports.flatMap((entry) => resolveRelativeImportCandidates(file.filename, entry)).slice(0, 6)) {
+      candidates.set(importPath, {
+        file: importPath,
+        reason: `Imported by ${file.filename}`,
+        source: "import",
+        excerpt: "",
+      });
+    }
+
+    for (const testPath of guessRelatedTestPaths(file.filename)) {
+      candidates.set(testPath, {
+        file: testPath,
+        reason: `Likely related test for ${file.filename}`,
+        source: "test",
+        excerpt: "",
+      });
+    }
+
+    for (const contractPath of guessContractPaths(file.filename)) {
+      candidates.set(contractPath, {
+        file: contractPath,
+        reason: `Potential contract or type definition near ${file.filename}`,
+        source: "contract",
+        excerpt: "",
+      });
+    }
+
+    const siblingFiles = mrData.files
+      .filter((candidate) => candidate.filename !== file.filename && getDirectory(candidate.filename) === getDirectory(file.filename))
+      .slice(0, 2);
+
+    for (const sibling of siblingFiles) {
+      candidates.set(sibling.filename, {
+        file: sibling.filename,
+        reason: `Sibling implementation near ${file.filename}`,
+        source: "sibling",
+        excerpt: findSnippetAroundSymbol(sibling.fullContent ?? sibling.patch ?? "", symbols),
+      });
+    }
+
+    const symbolMatches = mrData.files
+      .filter((candidate) => candidate.filename !== file.filename)
+      .filter((candidate) => {
+        const haystack = `${candidate.patch ?? ""}\n${candidate.fullContent ?? ""}`;
+        return symbols.some((symbol) => haystack.includes(symbol));
+      })
+      .slice(0, 2);
+
+    for (const match of symbolMatches) {
+      candidates.set(match.filename, {
+        file: match.filename,
+        reason: `Mentions changed symbol(s) from ${file.filename}`,
+        source: "symbol",
+        excerpt: findSnippetAroundSymbol(match.fullContent ?? match.patch ?? "", symbols),
+      });
+    }
+  }
+
+  const insights: ReviewContextInsight[] = [];
+  for (const candidate of candidates.values()) {
+    const existing = hydrated.files.find((file) => file.filename === candidate.file);
+    let content = existing?.fullContent ?? null;
+    if (!content && !existing?.patch) {
+      content = await fetchRepositoryFileContent(hydrated, candidate.file, token);
+      hydrated = mergeHydratedFile(hydrated, candidate.file, content);
+    } else if (!content && existing?.patch) {
+      content = existing.patch;
+    }
+
+    if (!content) continue;
+    insights.push({
+      ...candidate,
+      excerpt: candidate.excerpt || findSnippetAroundSymbol(content, extractInterestingSymbols(content)),
+    });
+  }
+
+  return {
+    hydrated,
+    insights: insights.slice(0, reviewMode === "quick" ? 8 : 16),
+  };
 }
 
 const CODEOWNERS_CANDIDATE_PATHS = [
@@ -785,25 +1129,27 @@ Top-level entries: ${repoContextData.topLevelEntries.join(", ") || "Unknown"}
 Using the repository files below, draft concise but high-signal repo review memory that future code reviews should use.
 
 Output requirements:
-- Use short markdown sections
 - Focus on stable repo context, not temporary implementation details
+- Fill each section with short, reviewer-usable bullet points
 - Include:
-  - Purpose
-  - Architecture / structure
-  - Business or domain rules
-  - Review priorities
-  - Intentional patterns / tradeoffs
-  - Do not flag by default
+  - purpose
+  - architecture
+  - domainRules
+  - reviewPriorities
+  - intentionalPatterns
+  - avoidFlagging
 - Do not invent specifics that are not supported by the provided files
 - Keep it compact and reviewer-oriented
 
 Repository files:
 ${sourcesText}`;
 
-  return callOpenRouterText(aiConfig.apiKey, getModelForTask(aiConfig, "summary"), [
+  const memory = await callOpenRouter<RepoReviewMemory>(aiConfig.apiKey, getModelForTask(aiConfig, "summary"), [
     { role: "system", content: "You write concise, reliable repository review memory for future AI code reviews." },
     { role: "user", content: prompt },
-  ]);
+  ], REPO_MEMORY_SCHEMA);
+
+  return formatRepoReviewMemory(memory);
 }
 
 const reviewerSuggestionCache = new Map<string, Promise<CodeReview["reviewerSuggestions"]>>();
@@ -883,6 +1229,40 @@ async function fetchReviewerSuggestions(mrData: MRData, token?: string): Promise
   return promise;
 }
 
+function buildRelatedContextText(insights: ReviewContextInsight[]): string {
+  if (insights.length === 0) {
+    return "No additional related repository context was retrieved.";
+  }
+
+  return insights
+    .map((insight) => {
+      const sourceLabel = insight.source.replace(/_/g, " ");
+      const excerpt = insight.excerpt?.trim() ? `\nExcerpt:\n${insight.excerpt.trim()}` : "";
+      return `### ${insight.file}\nSource: ${sourceLabel}\nReason: ${insight.reason}${excerpt}`;
+    })
+    .join("\n\n");
+}
+
+function normalizeReviewIssue(issue: ReviewIssue, index: number): ReviewIssue {
+  return {
+    ...issue,
+    id: issue.id?.trim() || `issue-${index + 1}`,
+    file: issue.file?.trim() || "",
+    lineHint: issue.lineHint?.trim() || "",
+    currentCode: issue.currentCode?.trim() || "",
+    impact: issue.impact?.trim() || "",
+    suggestedFix: issue.suggestedFix?.trim() || "",
+    verificationStatus: issue.verificationStatus === "verified" ? "verified" : "uncertain",
+    evidence: (issue.evidence ?? []).map((entry) => ({
+      type: entry.type,
+      summary: entry.summary?.trim() || "Supporting evidence was not summarised.",
+      file: entry.file?.trim() || "",
+      lineHint: entry.lineHint?.trim() || "",
+      snippet: entry.snippet?.trim() || "",
+    })),
+  };
+}
+
 export async function analyzeSummary(mrData: MRData, aiConfig: AIConfig): Promise<ChangeSummary> {
   const { pr, files } = mrData;
   const diffContent = buildDiffContent(files);
@@ -931,19 +1311,25 @@ Organize files into execution flow groups (Route/Entry → Middleware → Contro
 }
 
 export async function analyzeCodeReview(mrData: MRData, aiConfig: AIConfig, token?: string): Promise<CodeReview> {
-  const hydrated = await prepareMRDataForReview(mrData, aiConfig, token);
-  const { pr, files } = hydrated;
-  const reviewMode = aiConfig.reviewMode ?? "deep";
-  const diffContent = buildContextAwareDiff(files, reviewMode);
-
   if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required. Please configure it in AI Settings.");
 
+  const reviewMode = aiConfig.reviewMode ?? "deep";
+  const repoMemory = parseRepoReviewMemory(aiConfig.repoMemory);
+  const prepared = await prepareMRDataForReview(mrData, aiConfig, token);
+  const { hydrated, insights } = await buildRelatedContextInsights(prepared, reviewMode, token);
+  const { pr, files } = hydrated;
+  const diffContent = buildContextAwareDiff(files, reviewMode);
   const hasFullContent = files.some((f) => f.fullContent);
+  const relatedContextText = buildRelatedContextText(insights);
+  const structuredRepoMemory = hasRepoReviewMemory(repoMemory) ? formatRepoReviewMemory(repoMemory) : "";
+  const repoMemorySummary = hasRepoReviewMemory(repoMemory) ? summarizeRepoReviewMemory(repoMemory) : "";
+  const reviewerSuggestionsPromise = fetchReviewerSuggestions(hydrated, token);
+
   const systemPrompt = `You are a very senior software engineer (10+ years) performing a ${reviewMode === "quick" ? "fast, high-signal" : "thorough, context-aware"} code review.
 
-For each changed file you receive:
-${hasFullContent
-  ? "1. FULL FILE — the complete current state of the file after this PR's changes, so you can see imports, types, existing patterns, and how all code fits together\n2. DIFF — the exact lines added/removed"
+  For each changed file you receive:
+  ${hasFullContent
+    ? "1. FULL FILE — the complete current state of the file after this PR's changes, so you can see imports, types, existing patterns, and how all code fits together\n2. DIFF — the exact lines added/removed"
   : "- DIFF — the exact lines added/removed (full file context unavailable for this repository)"}
 
 Use the full file content (when present) to catch issues that only appear in context:
@@ -951,63 +1337,123 @@ Use the full file content (when present) to catch issues that only appear in con
 - Duplicate logic or existing helpers that should be reused  
 - Violated naming/style conventions established in the file
 - Type mismatches that span the full file scope
-- N+1 queries or missing eager-loads visible from the full model/query context
-- Security issues like hardcoded secrets, missing auth checks, injection vectors
+  - N+1 queries or missing eager-loads visible from the full model/query context
+  - Security issues like hardcoded secrets, missing auth checks, injection vectors
+  
+  You also receive RELATED REPOSITORY CONTEXT pulled from nearby imports, sibling files, likely tests, and contract/type files. Use it to validate cross-file behavior and reduce false positives.
+  Repository memory, when provided, describes stable architecture intent and known exceptions. Respect it over generic style preferences.
 
-Be precise: always provide the exact file path and line reference when flagging an issue.
-IMPORTANT: overallScore must be a decimal between 0.0 and 10.0 (e.g. 6.5, not 65).
-Always return valid JSON. For optional string fields (file, lineHint, currentCode, impact) always provide a string value (use "" if not applicable).
-For each issue:
-- set confidence to low, medium, or high based on how strongly the evidence supports the finding
-- set rationale to 1-2 sentences explaining why the finding matters in this specific PR
-- set fixable to true when a concrete code-level fix can be proposed from the provided context${
-  aiConfig.repoMemory?.trim()
-    ? "\n- treat REPOSITORY REVIEW MEMORY as high-priority context about intentional patterns, business rules, and what should or should not be flagged for this repo"
+  Be precise: always provide the exact file path and line reference when flagging an issue.
+  IMPORTANT: overallScore must be a decimal between 0.0 and 10.0 (e.g. 6.5, not 65).
+  Always return valid JSON. For optional string fields (file, lineHint, currentCode, impact) always provide a string value (use "" if not applicable).
+  For each issue:
+  - set confidence to low, medium, or high based on how strongly the evidence supports the finding
+  - set rationale to 1-2 sentences explaining why the finding matters in this specific PR
+  - set fixable to true when a concrete code-level fix can be proposed from the provided context${
+    structuredRepoMemory
+      ? "\n- treat REPOSITORY REVIEW MEMORY as high-priority context about intentional patterns, business rules, and what should or should not be flagged for this repo"
+      : ""
+  }${
+    reviewMode === "quick"
+      ? "\n- in quick mode, prioritize only high-confidence critical and warning issues unless a suggestion is unusually important"
     : ""
-}${
-  reviewMode === "quick"
-    ? "\n- in quick mode, prioritize only high-confidence critical and warning issues unless a suggestion is unusually important"
-    : ""
-}${
-  aiConfig.customRules?.trim()
-    ? `\n\nADDITIONAL REVIEWER RULES (from the team — follow these strictly):\n${aiConfig.customRules.trim()}`
-    : ""
-}`;
+  }${
+    aiConfig.customRules?.trim()
+      ? `\n\nADDITIONAL REVIEWER RULES (from the team — follow these strictly):\n${aiConfig.customRules.trim()}`
+      : ""
+  }
+  - add verificationStatus as "verified" when the evidence is directly supported by the supplied code/context, otherwise "uncertain"
+  - include evidence entries for each issue, using the most relevant sources from diff, full file, related files, tests, contracts, or repo memory
+  - include contextInsights summarising the most useful retrieved files that influenced the review
+  - use verificationSummary to explain what was cross-checked versus what remains uncertain`;
 
   const userPrompt = `PR Title: ${pr.title}
-PR Description: ${pr.description || "No description"}
-Author: ${pr.author}
-Branch: ${pr.headBranch} → ${pr.baseBranch}
-Stats: ${pr.changedFiles} files changed, +${pr.additions}/-${pr.deletions}
+  PR Description: ${pr.description || "No description"}
+  Author: ${pr.author}
+  Branch: ${pr.headBranch} → ${pr.baseBranch}
+  Stats: ${pr.changedFiles} files changed, +${pr.additions}/-${pr.deletions}
+  
+  ${structuredRepoMemory
+    ? `REPOSITORY REVIEW MEMORY:
+  ${structuredRepoMemory}
 
-${aiConfig.repoMemory?.trim()
-  ? `REPOSITORY REVIEW MEMORY:
-${aiConfig.repoMemory.trim()}
+  MEMORY SUMMARY:
+  ${repoMemorySummary}
+  
+  `
+    : ""}${aiConfig.customRules?.trim()
+    ? `TEAM REVIEW RULES:
+  ${aiConfig.customRules.trim()}
+  
+  `
+    : ""}RELATED CONTEXT:
+  ${relatedContextText}
+  
+  FILE CONTEXT + DIFFS:
+  ${diffContent}
+  
+  Produce a senior-level review that catches cross-file regressions, contract drift, duplicated patterns, risky auth/config changes, and stale tests when the supplied context supports it.`;
 
-`
-  : ""}${aiConfig.customRules?.trim()
-  ? `TEAM REVIEW RULES:
-${aiConfig.customRules.trim()}
-
-`
-  : ""}FILE CONTEXT + DIFFS:
-${diffContent}
-
-Perform a comprehensive senior-level code review using the full file context above.`;
-
-  const review = await callOpenRouter<CodeReview>(aiConfig.apiKey, getModelForTask(aiConfig, "review"), [
+  const candidateReview = await callOpenRouter<CodeReview>(aiConfig.apiKey, getModelForTask(aiConfig, "review"), [
     { role: "system", content: systemPrompt },
     { role: "user", content: userPrompt },
   ], REVIEW_SCHEMA);
 
-  // Normalise score: some models return 0–100 even when instructed otherwise
+  const verification = await callOpenRouter<{ verificationSummary: string; issues: ReviewIssue[] }>(
+    aiConfig.apiKey,
+    getModelForTask(aiConfig, "review"),
+    [
+      {
+        role: "system",
+        content: `You are verifying candidate code-review findings. Keep only findings supported by the supplied diff, full-file context, related repository context, and repo memory. 
+Return the same issues with corrected confidence, verificationStatus, rationale, and evidence. 
+If a finding may still be real but is not fully supported, mark it as uncertain instead of inventing certainty.
+Always return valid JSON.`,
+      },
+      {
+        role: "user",
+        content: `CANDIDATE REVIEW FINDINGS:
+${JSON.stringify(candidateReview.issues, null, 2)}
+
+${structuredRepoMemory
+  ? `REPOSITORY REVIEW MEMORY:
+${structuredRepoMemory}
+
+`
+  : ""}RELATED CONTEXT:
+${relatedContextText}
+
+FILE CONTEXT + DIFFS:
+${diffContent}
+
+Verify the findings, correct any unsupported claims, and summarise how much of the review is directly grounded in code versus inferred from broader context.`,
+      },
+    ],
+    REVIEW_VERIFICATION_SCHEMA,
+  );
+
+  const normalizedIssues = verification.issues.map((issue, index) => normalizeReviewIssue(issue, index));
+  const testGapSummary = computeTestGapSummary(files);
+  const review: CodeReview = {
+    ...candidateReview,
+    issues: normalizedIssues,
+    contextInsights: insights.map((insight) => ({
+      ...insight,
+      excerpt: insight.excerpt ?? "",
+    })),
+    verificationSummary: verification.verificationSummary,
+    testGapSummary,
+    riskHotspots: computeRiskHotspots(files, normalizedIssues, testGapSummary),
+    reviewerSuggestions: await reviewerSuggestionsPromise,
+  };
+
   if (review.overallScore > 10) {
     review.overallScore = Math.round((review.overallScore / 10) * 10) / 10;
   }
 
-  review.testGapSummary = computeTestGapSummary(files);
-  review.riskHotspots = computeRiskHotspots(files, review.issues, review.testGapSummary);
-  review.reviewerSuggestions = [];
+  if (review.overallScore < 0) {
+    review.overallScore = 0;
+  }
 
   return review;
 }
@@ -1225,18 +1671,30 @@ export async function askReviewQuestion(
 ): Promise<string> {
   if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required.");
 
-  const context = buildContextAwareDiff(mrData.files, "quick");
+  const reviewMode = aiConfig.reviewMode ?? "quick";
+  const repoMemory = parseRepoReviewMemory(aiConfig.repoMemory);
+  const prepared = await prepareMRDataForReview(mrData, { ...aiConfig, reviewMode }, token);
+  const { hydrated, insights } = await buildRelatedContextInsights(prepared, "quick", token);
+  const context = buildContextAwareDiff(hydrated.files, "quick");
+  const relatedContextText = buildRelatedContextText(insights);
+  const structuredRepoMemory = hasRepoReviewMemory(repoMemory) ? formatRepoReviewMemory(repoMemory) : "";
 
   return callOpenRouterText(aiConfig.apiKey, getModelForTask(aiConfig, "chat"), [
     {
       role: "system",
-      content: "You are a senior engineer answering focused questions about a pull or merge request. Be precise, grounded in the provided diff and file context, and say when the answer is uncertain.",
+      content: "You are a senior engineer answering focused questions about a pull or merge request. Be precise, grounded in the provided diff, full-file context, related repository context, and repo memory. Say explicitly when the answer is uncertain.",
     },
     {
       role: "user",
       content: `PR Title: ${mrData.pr.title}
 PR Description: ${mrData.pr.description || "No description"}
 Branch: ${mrData.pr.headBranch} → ${mrData.pr.baseBranch}
+
+${structuredRepoMemory ? `REPOSITORY REVIEW MEMORY:
+${structuredRepoMemory}
+
+` : ""}RELATED CONTEXT:
+${relatedContextText}
 
 FILE CONTEXT + DIFFS:
 ${context}
@@ -1254,15 +1712,21 @@ export async function generateIssueFix(
 ): Promise<string> {
   if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required.");
 
+  const repoMemory = parseRepoReviewMemory(aiConfig.repoMemory);
   const hydrated = issue.file
     ? await hydrateFilesForReview(mrData, [issue.file], token)
     : mrData;
-  const context = getRelevantFileContext(hydrated, issue.file, "deep");
+  const { hydrated: enriched, insights } = await buildRelatedContextInsights(hydrated, "deep", token);
+  const context = getRelevantFileContext(enriched, issue.file, "deep");
+  const relatedContextText = buildRelatedContextText(
+    insights.filter((insight) => !issue.file || insight.file === issue.file || insight.reason.includes(issue.file)).slice(0, 6),
+  );
+  const structuredRepoMemory = hasRepoReviewMemory(repoMemory) ? formatRepoReviewMemory(repoMemory) : "";
 
   return callOpenRouterText(aiConfig.apiKey, getModelForTask(aiConfig, "fix"), [
     {
       role: "system",
-      content: "You are a senior engineer generating a concrete fix suggestion for a review issue. Return only the proposed code or patch-style snippet with a short introductory sentence if needed.",
+      content: "You are a senior engineer generating a concrete fix suggestion for a review issue. Use the current file context, related repository context, and repo memory to match existing patterns. Return only the proposed code or patch-style snippet with a short introductory sentence if needed.",
     },
     {
       role: "user",
@@ -1276,6 +1740,12 @@ ${issue.currentCode || "(not provided)"}
 
 Existing suggested fix:
 ${issue.suggestedFix || "(not provided)"}
+
+${structuredRepoMemory ? `REPOSITORY REVIEW MEMORY:
+${structuredRepoMemory}
+
+` : ""}RELATED CONTEXT:
+${relatedContextText}
 
 Relevant file context:
 ${context}`,

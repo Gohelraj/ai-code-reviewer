@@ -16,6 +16,7 @@ The app is intentionally client-heavy:
 - Senior-style code review with score, verdict, strengths, issues, security/performance notes, and merge-readiness guidance
 - Quick and deep review modes, selectable in AI settings and directly from the review screen
 - Trust signals on every issue: `confidence`, `rationale`, and optional fix generation
+- Verification-aware findings with explicit evidence and verification summaries
 - Re-run comparison with score delta, added findings, removed findings, and severity changes
 - Test-gap detection and file-level risk hotspots
 - Reviewer routing suggestions from `CODEOWNERS` when the target repo exposes one
@@ -43,10 +44,13 @@ That split is deliberate: summary/flow stay fast, while the more expensive revie
 
 - Issue confidence levels: `low`, `medium`, `high`
 - Per-issue rationale for why a finding matters in this specific change
+- Per-issue evidence sourced from diffs, full files, related files, tests, contracts, or repo memory
+- Verification pass that marks findings as `verified` or `uncertain`
 - Merge-readiness gates derived from score, critical issues, test-gap signal, requirements coverage, and MR description quality
 - Review rerun comparison to see whether things actually improved
 - Quick/deep review selection for balancing latency, cost, and depth
 - Review context planning so deeper context is only fetched for the most relevant files
+- Related-context retrieval from imports, sibling files, likely tests, and contract/type files
 
 ### Team Workflow
 
