@@ -14,23 +14,26 @@ The app is intentionally client-heavy:
 - Change summary with purpose, scope, impact, tech stack, and breaking-change detection
 - Execution-flow view grouped by architectural layers
 - Senior-style code review with score, verdict, strengths, issues, security/performance notes, and merge-readiness guidance
+- Quick and deep review modes, selectable in AI settings and directly from the review screen
 - Trust signals on every issue: `confidence`, `rationale`, and optional fix generation
 - Re-run comparison with score delta, added findings, removed findings, and severity changes
 - Test-gap detection and file-level risk hotspots
 - Reviewer routing suggestions from `CODEOWNERS` when the target repo exposes one
 - “Ask This PR” follow-up chat grounded in the diff and fetched file context
+- Repo review memory: reusable repository-specific context that can be written manually or generated from repository files
 - Linked issue requirements checking for GitHub issues and GitLab issues/work items
 - MR description review with suggested rewritten copy
 - Selective posting back to GitHub/GitLab as inline or general comments
-- Local history, repo-aware presets, per-repo defaults, and deep-linkable result state
+- Local history, repo-aware presets, per-repo defaults, deep-linkable result state, and cached-analysis reload with manual refresh
 
 ## Runtime Model
 
 1. Paste a GitHub PR or GitLab MR URL.
 2. The app fetches MR metadata plus changed-file diffs.
-3. Summary and execution flow run automatically from diff-only context.
-4. Code review runs on demand and lazily hydrates full file contents for richer review context.
-5. Optional follow-up tools such as requirements check, MR description review, PR chat, fix generation, and comment posting run only when requested.
+3. If a saved local analysis for the same URL already exists, the app can load it immediately and let you refresh the MR/PR on demand.
+4. Summary and execution flow run automatically from diff-only context unless you choose `summary-only` start mode.
+5. Code review runs on demand and lazily hydrates selected full file contents for richer review context.
+6. Optional follow-up tools such as requirements check, MR description review, PR chat, fix generation, and comment posting run only when requested.
 
 That split is deliberate: summary/flow stay fast, while the more expensive review operations fetch deeper context only when needed.
 
@@ -42,18 +45,22 @@ That split is deliberate: summary/flow stay fast, while the more expensive revie
 - Per-issue rationale for why a finding matters in this specific change
 - Merge-readiness gates derived from score, critical issues, test-gap signal, requirements coverage, and MR description quality
 - Review rerun comparison to see whether things actually improved
+- Quick/deep review selection for balancing latency, cost, and depth
+- Review context planning so deeper context is only fetched for the most relevant files
 
 ### Team Workflow
 
 - Save named presets for model, custom rules, and posting mode
-- Store repo-specific defaults such as default tab, posting preference, and active preset
+- Store repo-specific defaults such as default tab, posting preference, active preset, and repo review memory
 - Reviewer suggestions from `CODEOWNERS`
+- Load the latest saved local analysis for a PR/MR URL, then refresh against the remote when needed
 - Export results as Markdown or JSON
 
 ### UX
 
 - Inline, split, and full-file diff viewing
 - Review history stored locally in IndexedDB
+- Cached-history banner and `Refresh MR` action when a local analysis is reopened
 - Deep links for tab, file, and issue state via URL params
 - Dark, light, and system theme support
 - Keyboard shortcuts in the results view
@@ -129,6 +136,7 @@ docker run -d -p 3000:3000 --name ai-code-reviewer ai-code-reviewer
 - OpenRouter keys are used from the browser. If you save AI settings, they are stored in localStorage on that machine.
 - GitHub/GitLab access tokens are session input only and are used for private repos or comment posting.
 - GitLab API access is proxied through `/api/gitlab` in dev and production.
+- Review depth, start mode, presets, and repo review memory are all stored locally in the browser.
 
 ## Repository Structure
 
@@ -163,6 +171,7 @@ vitest.config.ts
 - Reviewer routing depends on a readable `CODEOWNERS` file in the target repository and current branch.
 - GitHub/GitLab fetching currently targets the common public-hosted URL shapes in the UI.
 - Shiki support is intentionally trimmed to common review languages to keep bundle size more manageable.
+- Full-file viewing and full-file review context are selective. They are available when the app has hydrated file content, not automatically for every changed file at all times.
 
 ## Scripts
 
