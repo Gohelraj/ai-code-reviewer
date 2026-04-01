@@ -12,18 +12,18 @@ const AUTH_RISK_PATTERN = /(auth|permission|role|session|token|oauth|acl|rbac|lo
 const CONFIG_RISK_PATTERN = /(config|env|settings|docker|compose|k8s|terraform|helm|workflow|pipeline|secret)/i;
 const REVIEW_MODE_CONFIG = {
   quick: {
-    maxFiles: 6,
+    maxFiles: 8,
     maxFullFiles: 0,
-    totalContextChars: 32_000,
-    perFilePatchChars: 2_500,
+    totalContextChars: 40_000,
+    perFilePatchChars: 3_000,
     perFileFullChars: 0,
   },
   deep: {
-    maxFiles: 10,
-    maxFullFiles: 4,
-    totalContextChars: 70_000,
-    perFilePatchChars: 4_500,
-    perFileFullChars: 12_000,
+    maxFiles: 20,
+    maxFullFiles: Infinity,
+    totalContextChars: 120_000,
+    perFilePatchChars: 6_000,
+    perFileFullChars: 15_000,
   },
 } as const;
 
