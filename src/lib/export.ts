@@ -105,7 +105,6 @@ export function exportAsMarkdown(state: AnalysisState): string {
       for (const i of codeReview.issues) {
         lines.push(`#### [${i.severity.toUpperCase()}] ${i.title}`);
         if (i.file) lines.push(`**File:** ${i.file}${i.lineHint ? ` · ${i.lineHint}` : ""}`);
-        lines.push(`**Confidence:** ${i.confidence.toUpperCase()}`);
         lines.push(``);
         lines.push(i.description);
         lines.push(``);

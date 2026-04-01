@@ -172,12 +172,6 @@ function buildSingleIssueMarkdown(issue: ReviewIssue): string {
     lines.push(`📁 \`${issue.file}\`${issue.lineHint ? ` · ${issue.lineHint}` : ""}`);
     lines.push(``);
   }
-  if (issue.category) {
-    lines.push(`**Category:** ${issue.category}`);
-    lines.push(``);
-  }
-  lines.push(`**Confidence:** ${issue.confidence.toUpperCase()}`);
-  lines.push(``);
   lines.push(issue.description);
   lines.push(``);
   lines.push(`**Rationale:** ${issue.rationale}`);
@@ -752,12 +746,6 @@ export function CodeReviewPanel({
           lines.push(`📁 \`${issue.file}\`${issue.lineHint ? ` · ${issue.lineHint}` : ''}`);
           lines.push(``);
         }
-        if (issue.category) {
-          lines.push(`**Category:** ${issue.category}`);
-          lines.push(``);
-        }
-        lines.push(`**Confidence:** ${issue.confidence.toUpperCase()}`);
-        lines.push(``);
         lines.push(issue.description);
         lines.push(``);
         lines.push(`**Rationale:** ${issue.rationale}`);
