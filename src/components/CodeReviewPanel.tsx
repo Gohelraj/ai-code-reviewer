@@ -7,6 +7,7 @@ import {
   Bot, Sparkles, Wand2, GitCompareArrows
 } from "lucide-react";
 import toast from "react-hot-toast";
+import { formatDistanceToNow } from "date-fns";
 import type { CodeReview, ReviewIssue, MRData, RequirementsCheck, MRDescriptionReview, ReviewChatMessage } from "../types";
 import { postReviewComment, postInlineComments, fetchPostedIssueIds, buildIssueMarkdown, type InlinePostResult } from "../lib/github-comment";
 import ConfirmModal from "./ConfirmModal";
@@ -22,6 +23,12 @@ interface CodeReviewPanelProps {
   prToken?: string;
   mrData?: MRData | null;
   previousReview?: CodeReview | null;
+  previousReviewMeta?: {
+    source: "history" | "rerun";
+    previousCommits: number;
+    commitDelta: number;
+    timestamp?: number;
+  } | null;
   reviewLoading?: boolean;
   onTriggerReview?: (reviewMode?: ReviewMode) => void;
   reviewMode?: ReviewMode;
@@ -654,6 +661,7 @@ export function CodeReviewPanel({
   prToken,
   mrData,
   previousReview,
+  previousReviewMeta,
   reviewLoading,
   onTriggerReview,
   reviewMode = "deep",
@@ -1181,8 +1189,17 @@ export function CodeReviewPanel({
             <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
               <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-2">
                 <GitCompareArrows size={14} />
-                Re-run Comparison
+                {previousReviewMeta?.source === "history" ? "Comparison vs Last Saved Review" : "Re-run Comparison"}
               </h3>
+              {previousReviewMeta && (
+                <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
+                  {previousReviewMeta.source === "history"
+                    ? previousReviewMeta.commitDelta > 0
+                      ? `${previousReviewMeta.commitDelta} new commit${previousReviewMeta.commitDelta === 1 ? "" : "s"} detected since the last saved review${previousReviewMeta.timestamp ? ` from ${formatDistanceToNow(previousReviewMeta.timestamp, { addSuffix: true })}` : ""}.`
+                      : `Comparing against the last saved review${previousReviewMeta.timestamp ? ` from ${formatDistanceToNow(previousReviewMeta.timestamp, { addSuffix: true })}` : ""}. No new commits were detected from the saved baseline.`
+                    : "Comparing this review against the previous run on the currently loaded MR snapshot."}
+                </p>
+              )}
               <div className="flex flex-wrap gap-2 text-xs">
                 <span className="rounded-full bg-accent/10 text-accent px-2.5 py-1 border border-accent/20">
                   {review.reviewDiff.scoreDelta >= 0 ? "+" : ""}{review.reviewDiff.scoreDelta} score delta
@@ -1499,6 +1516,17 @@ export function CodeReviewPanel({
                   </button>
                 )}
               </div>
+              {mrData?.platform === "gitlab" && (
+                <a
+                  href="https://docs.gitlab.com/user/profile/personal_access_tokens/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <Key size={11} />
+                  How to create a GitLab personal access token
+                </a>
+              )}
             </motion.div>
           )}
 

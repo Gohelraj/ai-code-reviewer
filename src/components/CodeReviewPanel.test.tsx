@@ -103,6 +103,7 @@ describe("CodeReviewPanel", () => {
       <CodeReviewPanel
         review={review}
         previousReview={{ ...review, overallScore: 6, reviewDiff: undefined }}
+        previousReviewMeta={{ source: "history", previousCommits: 1, commitDelta: 2, timestamp: new Date("2026-03-30T10:00:00Z").getTime() }}
         mrData={mrData}
         aiConfig={aiConfig}
         selectedIssueId="issue-1"
@@ -135,6 +136,8 @@ describe("CodeReviewPanel", () => {
     expect(screen.getByText("Merge Readiness Gates")).toBeInTheDocument();
     expect(screen.getByText("Requirements coverage")).toBeInTheDocument();
     expect(screen.getByText("AI reviewer")).toBeInTheDocument();
+    expect(screen.getByText("Comparison vs Last Saved Review")).toBeInTheDocument();
+    expect(screen.getByText(/2 new commits detected since the last saved review/i)).toBeInTheDocument();
 
     const hotspotsSection = screen.getByText("Risk Hotspots").closest("div");
     const hotspotButton = within(hotspotsSection as HTMLElement).getByRole("button", { name: /risk 82/i });

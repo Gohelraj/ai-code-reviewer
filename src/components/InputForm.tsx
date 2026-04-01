@@ -15,6 +15,7 @@ export interface SubmitPayload {
   token?: string;
   aiConfig: AIConfig;
   issueUrl?: string;
+  forceRefresh?: boolean;
 }
 
 interface InputFormProps {
@@ -80,7 +81,7 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
       saveStoredRepoToken(repoKey, trimmedToken, rememberToken ? "persistent" : "session");
       setHasSavedToken(true);
     }
-    onSubmit({ url: url.trim(), token: trimmedToken || undefined, aiConfig, issueUrl: issueUrl.trim() || undefined });
+    onSubmit({ url: url.trim(), token: trimmedToken || undefined, aiConfig, issueUrl: issueUrl.trim() || undefined, forceRefresh: false });
   };
 
   const isValidUrl = url.includes("github.com") || url.includes("gitlab.com");
@@ -318,6 +319,17 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
                             </button>
                           )}
                         </div>
+                        {platformLabel === "GitLab" && (
+                          <a
+                            href="https://docs.gitlab.com/user/profile/personal_access_tokens/"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <Key size={11} />
+                            How to create a GitLab personal access token
+                          </a>
+                        )}
                       </motion.div>
                     )}
 

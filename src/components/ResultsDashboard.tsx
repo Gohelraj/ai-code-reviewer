@@ -34,6 +34,7 @@ interface ResultsDashboardProps {
   reqLoading: boolean;
   mrDescLoading: boolean;
   onTriggerFlow: () => void;
+  onRefresh: () => void;
   onTriggerReview: (reviewMode?: ReviewMode) => void;
   onTriggerRequirements: () => void;
   onTriggerMRDescription: () => void;
@@ -46,9 +47,11 @@ interface ResultsDashboardProps {
   onReviewChatChange?: (messages: AnalysisState["reviewChat"]) => void;
   onSelectedIssueChange?: (selectedIssueId?: string) => void;
   onSelectedFileChange?: (selectedFile?: string) => void;
+  loadedFromHistory?: boolean;
+  loadedHistoryTimestamp?: number | null;
 }
 
-export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, flowLoading, reqLoading, mrDescLoading, onTriggerFlow, onTriggerReview, onTriggerRequirements, onTriggerMRDescription, prUrl, prToken, onNotesChange, onTokenChange, onLoadHistory, onAIConfigChange, onReviewChatChange, onSelectedIssueChange, onSelectedFileChange }: ResultsDashboardProps) {
+export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme, onThemeChange, reviewLoading, flowLoading, reqLoading, mrDescLoading, onTriggerFlow, onRefresh, onTriggerReview, onTriggerRequirements, onTriggerMRDescription, prUrl, prToken, onNotesChange, onTokenChange, onLoadHistory, onAIConfigChange, onReviewChatChange, onSelectedIssueChange, onSelectedFileChange, loadedFromHistory = false, loadedHistoryTimestamp = null }: ResultsDashboardProps) {
   const { mrData, summary, executionFlow, codeReview, activeTab, requirementsCheck, mrDescriptionReview } = state;
   const [reviewRunMode, setReviewRunMode] = useState<ReviewMode>(aiConfig?.reviewMode ?? "deep");
   const modelLabel = aiConfig?.provider === "openrouter" && aiConfig.apiKey
@@ -229,6 +232,14 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
                 <ChevronDown size={10} className="text-muted-foreground" />
               </button>
             )}
+            <button
+              onClick={onRefresh}
+              className="hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card transition-colors flex-shrink-0"
+              title="Fetch the latest MR/PR snapshot and rerun summary/flow"
+            >
+              <RefreshCw size={11} className="text-muted-foreground" />
+              <span className="font-medium text-foreground">Refresh MR</span>
+            </button>
             <ThemeToggle theme={theme} onThemeChange={onThemeChange} />
             <button
               onClick={onReset}
@@ -275,6 +286,19 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
           />
         <main className="flex-1 min-w-0 overflow-y-auto">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 pb-20 sm:pb-6">
+        {loadedFromHistory && (
+          <div className="mb-5 rounded-2xl border border-blue-200 bg-blue-50/80 px-4 py-3 text-sm text-blue-900 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-100">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="font-semibold">Viewing saved analysis</span>
+              <span className="text-blue-800/80 dark:text-blue-100/80">
+                {loadedHistoryTimestamp
+                  ? `from ${formatDistanceToNow(loadedHistoryTimestamp, { addSuffix: true })}`
+                  : "from an earlier run"}
+              </span>
+              <span className="text-blue-800/80 dark:text-blue-100/80">Use `Refresh MR` to fetch the latest changes.</span>
+            </div>
+          </div>
+        )}
         {activeTab === "summary" && summary && (
           <ChangeSummaryPanel summary={summary} mrData={mrData} scrollToFile={scrollToFile} />
         )}
@@ -316,6 +340,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
             prToken={prToken}
             mrData={mrData}
             previousReview={state.previousReview}
+            previousReviewMeta={state.previousReviewMeta}
             reviewLoading={reviewLoading}
             onTriggerReview={onTriggerReview}
             reviewMode={reviewRunMode}

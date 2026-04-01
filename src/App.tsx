@@ -6,7 +6,7 @@ import { AnalysisProgress } from "./components/AnalysisProgress";
 import { ResultsDashboard } from "./components/ResultsDashboard";
 import { fetchMRDiff, analyzeSummary, analyzeExecutionFlow, analyzeCodeReview, fetchIssueData, analyzeRequirements, analyzeMRDescription, prepareMRDataForReview } from "./lib/api";
 import type { IssueData } from "./lib/api";
-import { saveAnalysis } from "./lib/history";
+import { getLatestHistoryForUrl, getLatestReviewHistoryForUrl, saveAnalysis } from "./lib/history";
 import type { HistoryEntry } from "./lib/history";
 import type { AnalysisState } from "./types";
 import type { AIConfig, ReviewMode } from "./components/AISettings";
@@ -40,6 +40,8 @@ function App() {
   const [analysisUrl, setAnalysisUrl] = useState("");
   const [analysisToken, setAnalysisToken] = useState<string | undefined>(undefined);
   const [issueData, setIssueData] = useState<IssueData | null>(null);
+  const [loadedFromHistory, setLoadedFromHistory] = useState(false);
+  const [loadedHistoryTimestamp, setLoadedHistoryTimestamp] = useState<number | null>(null);
   const { theme, setTheme } = useDarkMode();
 
   const updateState = useCallback((patch: Partial<AnalysisState>) => {
@@ -55,9 +57,10 @@ function App() {
     });
   }, [state.step, state.activeTab, state.selectedFile, state.selectedIssueId]);
 
-  const handleAnalyze = useCallback(async ({ url, token, aiConfig, issueUrl }: SubmitPayload) => {
+  const handleAnalyze = useCallback(async ({ url, token, aiConfig, issueUrl, forceRefresh = false }: SubmitPayload) => {
     const normalizedConfig = sanitizeAIConfig(aiConfig);
     const repoDefaults = loadRepoDefaults(getRepoKeyFromUrl(url));
+    const normalizedIssueUrl = issueUrl?.trim() || undefined;
     setState({
       ...createInitialState(),
       step: "fetching",
@@ -69,20 +72,57 @@ function App() {
     setAnalysisUrl(url);
     setAnalysisToken(token);
     setIssueData(null);
+    setLoadedFromHistory(false);
+    setLoadedHistoryTimestamp(null);
 
     try {
+      if (!forceRefresh) {
+        const existingEntry = await getLatestHistoryForUrl(url);
+        if (existingEntry && (existingEntry.state.linkedIssueUrl ?? undefined) === normalizedIssueUrl) {
+          setState(existingEntry.state);
+          setActiveAIConfig(sanitizeAIConfig(existingEntry.aiConfig));
+          setAnalysisUrl(url);
+          setAnalysisToken(token);
+          writeUiStateToLocation({
+            activeTab: existingEntry.state.activeTab,
+            selectedFile: existingEntry.state.selectedFile,
+            selectedIssueId: existingEntry.state.selectedIssueId,
+          });
+          setLoadedFromHistory(true);
+          setLoadedHistoryTimestamp(existingEntry.timestamp);
+          toast.success("Loaded saved analysis. Use Refresh MR to fetch the latest changes.");
+          return;
+        }
+      }
+
       // Step 1: Fetch diff + optional issue data
       const mrDataPromise = fetchMRDiff(url, token);
-      const issuePromise = issueUrl
-        ? fetchIssueData(issueUrl, token).catch((err) => {
+      const previousReviewEntryPromise = getLatestReviewHistoryForUrl(url);
+      const issuePromise = normalizedIssueUrl
+        ? fetchIssueData(normalizedIssueUrl, token).catch((err) => {
             toast.error(`Issue fetch failed: ${err instanceof Error ? err.message : "Unknown"}`);
             return null;
           })
         : Promise.resolve(null);
 
-      const [mrData, issue] = await Promise.all([mrDataPromise, issuePromise]);
+      const [mrData, issue, previousReviewEntry] = await Promise.all([mrDataPromise, issuePromise, previousReviewEntryPromise]);
       if (issue) setIssueData(issue);
-      updateState({ step: "summarizing", mrData, linkedIssueUrl: issueUrl });
+      const previousReview = previousReviewEntry?.state.codeReview ?? null;
+      const previousCommits = previousReviewEntry?.state.mrData?.pr.commits ?? 0;
+      updateState({
+        step: "summarizing",
+        mrData,
+        linkedIssueUrl: normalizedIssueUrl,
+        previousReview,
+        previousReviewMeta: previousReview
+          ? {
+              source: "history",
+              previousCommits,
+              commitDelta: Math.max(mrData.pr.commits - previousCommits, 0),
+              timestamp: previousReviewEntry?.timestamp,
+            }
+          : null,
+      });
 
       // Step 2: Summarize + flow in parallel (requirements & MR desc are manual)
       updateState({ step: "summarizing" });
@@ -123,6 +163,17 @@ function App() {
     }
   }, [updateState]);
 
+  const handleRefreshAnalysis = useCallback(async () => {
+    if (!analysisUrl || !activeAIConfig) return;
+    await handleAnalyze({
+      url: analysisUrl,
+      token: analysisToken,
+      aiConfig: activeAIConfig,
+      issueUrl: state.linkedIssueUrl,
+      forceRefresh: true,
+    });
+  }, [analysisUrl, analysisToken, activeAIConfig, state.linkedIssueUrl, handleAnalyze]);
+
   const handleReset = useCallback(() => {
     setState(createInitialState());
     setActiveAIConfig(null);
@@ -133,6 +184,8 @@ function App() {
     setAnalysisUrl("");
     setAnalysisToken(undefined);
     setIssueData(null);
+    setLoadedFromHistory(false);
+    setLoadedHistoryTimestamp(null);
   }, []);
 
   const handleLoadHistory = useCallback((entry: HistoryEntry) => {
@@ -141,6 +194,8 @@ function App() {
     setAnalysisUrl(entry.url);
     setReviewLoading(false);
     setFlowLoading(false);
+    setLoadedFromHistory(true);
+    setLoadedHistoryTimestamp(entry.timestamp);
     writeUiStateToLocation({
       activeTab: entry.state.activeTab,
       selectedFile: entry.state.selectedFile,
@@ -219,19 +274,24 @@ function App() {
       ...activeAIConfig,
       reviewMode: reviewModeOverride ?? activeAIConfig.reviewMode ?? "deep",
     };
-
-    // Stash current review as "previous" for comparison
-    if (state.codeReview) {
-      updateState({ previousReview: state.codeReview });
-    }
+    const baselineReview = state.codeReview ?? state.previousReview ?? null;
+    const baselineMeta = state.codeReview
+      ? {
+          source: "rerun" as const,
+          previousCommits: state.mrData.pr.commits,
+          commitDelta: 0,
+        }
+      : state.previousReviewMeta ?? null;
 
     try {
       const preparedMRData = await prepareMRDataForReview(state.mrData, reviewConfig, analysisToken);
       const codeReview = await analyzeCodeReview(preparedMRData, reviewConfig, analysisToken);
-      codeReview.reviewDiff = computeReviewDiff(state.codeReview, codeReview);
+      codeReview.reviewDiff = computeReviewDiff(baselineReview, codeReview);
       updateState({
         mrData: preparedMRData,
         codeReview,
+        previousReview: baselineReview,
+        previousReviewMeta: baselineMeta,
         activeTab: "review",
         selectedIssueId: state.selectedIssueId && codeReview.issues.some((issue) => issue.id === state.selectedIssueId)
           ? state.selectedIssueId
@@ -253,7 +313,7 @@ function App() {
     } finally {
       setReviewLoading(false);
     }
-  }, [state.mrData, state.codeReview, state.selectedIssueId, activeAIConfig, reviewLoading, updateState, analysisToken, analysisUrl]);
+  }, [state.mrData, state.codeReview, state.previousReview, state.previousReviewMeta, state.selectedIssueId, activeAIConfig, reviewLoading, updateState, analysisToken, analysisUrl]);
 
   const handleReviewChatChange = useCallback((messages: AnalysisState["reviewChat"]) => {
     updateState({ reviewChat: messages });
@@ -334,6 +394,7 @@ function App() {
           reqLoading={reqLoading}
           mrDescLoading={mrDescLoading}
           onTriggerFlow={handleTriggerFlow}
+          onRefresh={handleRefreshAnalysis}
           onTriggerReview={handleTriggerReview}
           onTriggerRequirements={handleTriggerRequirements}
           onTriggerMRDescription={handleTriggerMRDescription}
@@ -346,6 +407,8 @@ function App() {
           onReviewChatChange={handleReviewChatChange}
           onSelectedIssueChange={handleSelectedIssueChange}
           onSelectedFileChange={handleSelectedFileChange}
+          loadedFromHistory={loadedFromHistory}
+          loadedHistoryTimestamp={loadedHistoryTimestamp}
         />
       );
     }
@@ -377,6 +440,7 @@ function App() {
       reqLoading={reqLoading}
       mrDescLoading={mrDescLoading}
       onTriggerFlow={handleTriggerFlow}
+      onRefresh={handleRefreshAnalysis}
       onTriggerReview={handleTriggerReview}
       onTriggerRequirements={handleTriggerRequirements}
       onTriggerMRDescription={handleTriggerMRDescription}
@@ -389,6 +453,8 @@ function App() {
       onReviewChatChange={handleReviewChatChange}
       onSelectedIssueChange={handleSelectedIssueChange}
       onSelectedFileChange={handleSelectedFileChange}
+      loadedFromHistory={loadedFromHistory}
+      loadedHistoryTimestamp={loadedHistoryTimestamp}
     />
   );
 }

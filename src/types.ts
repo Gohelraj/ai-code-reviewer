@@ -174,6 +174,13 @@ export interface AnalysisState {
   reviewerNotes?: string;
   /** Previous code review for comparison after re-review */
   previousReview?: CodeReview | null;
+  /** Metadata about the comparison baseline shown in the review UI */
+  previousReviewMeta?: {
+    source: "history" | "rerun";
+    previousCommits: number;
+    commitDelta: number;
+    timestamp?: number;
+  } | null;
   /** Requirements check from linked issue */
   requirementsCheck?: RequirementsCheck | null;
   /** MR description review */

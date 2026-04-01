@@ -153,3 +153,13 @@ export async function loadAnalysis(id: string): Promise<HistoryEntry | null> {
     return null;
   }
 }
+
+export async function getLatestReviewHistoryForUrl(url: string): Promise<HistoryEntry | null> {
+  const entries = await getHistory();
+  return entries.find((entry) => entry.url === url && !!entry.state.codeReview) ?? null;
+}
+
+export async function getLatestHistoryForUrl(url: string): Promise<HistoryEntry | null> {
+  const entries = await getHistory();
+  return entries.find((entry) => entry.url === url) ?? null;
+}
