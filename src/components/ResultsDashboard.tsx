@@ -563,7 +563,12 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
             </div>
             <div className="max-h-[60vh] overflow-y-auto p-5">
               <div className="space-y-4">
-                <RepoContextSettings config={localAIConfig} onChange={setLocalAIConfig} />
+                <RepoContextSettings
+                  config={localAIConfig}
+                  onChange={setLocalAIConfig}
+                  repoUrl={prUrl}
+                  repoToken={prToken}
+                />
                 <AISettings config={localAIConfig} onChange={setLocalAIConfig} repoKey={repoKey} />
               </div>
             </div>

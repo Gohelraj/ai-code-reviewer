@@ -286,7 +286,13 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
                         animate={{ opacity: 1, height: "auto" }}
                         transition={{ duration: 0.2 }}
                       >
-                        <RepoContextSettings config={aiConfig} onChange={setAiConfig} disabled={isLoading} />
+                        <RepoContextSettings
+                          config={aiConfig}
+                          onChange={setAiConfig}
+                          disabled={isLoading}
+                          repoUrl={isValidUrl ? url.trim() : undefined}
+                          repoToken={token.trim() || undefined}
+                        />
                       </motion.div>
                     )}
 

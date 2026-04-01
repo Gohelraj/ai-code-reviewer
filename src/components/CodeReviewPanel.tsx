@@ -728,6 +728,7 @@ export function CodeReviewPanel({
   const [loadingFixId, setLoadingFixId] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const hasRepoContext = !!aiConfig?.repoMemory?.trim();
   const verdictConfig = VERDICT_CONFIG[review.overallVerdict] ?? DEFAULT_VERDICT;
   const VerdictIcon = verdictConfig.icon;
 
@@ -1165,6 +1166,12 @@ export function CodeReviewPanel({
 
           {/* Issue summary pills */}
           <div className="flex gap-2.5 flex-wrap">
+            {hasRepoContext && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-accent/10 border border-accent/20">
+                <BookOpen size={13} className="text-accent" />
+                <span className="text-xs font-semibold text-accent">Using repo context</span>
+              </div>
+            )}
             {criticalCount > 0 && (
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-destructive/10 border border-destructive/20">
                 <XCircle size={13} className="text-destructive" />

@@ -614,6 +614,198 @@ function getModelForTask(aiConfig: AIConfig, task: "summary" | "flow" | "review"
   return normalizeOpenRouterModel(aiConfig.auxiliaryModel?.trim() || aiConfig.model, DEFAULT_PRIMARY_MODEL);
 }
 
+interface RepoContextSource {
+  path: string;
+  content: string;
+}
+
+const REPO_CONTEXT_CANDIDATE_PATHS = [
+  "README.md",
+  "docs/README.md",
+  "CONTRIBUTING.md",
+  "ARCHITECTURE.md",
+  "docs/architecture.md",
+  "package.json",
+  "tsconfig.json",
+  "vite.config.ts",
+  "vite.config.js",
+  "next.config.js",
+  "next.config.ts",
+  "pyproject.toml",
+  "requirements.txt",
+  "Cargo.toml",
+  "go.mod",
+  "pom.xml",
+  "build.gradle",
+  "Dockerfile",
+  "docker-compose.yml",
+  ".env.example",
+];
+
+function truncateRepoContext(value: string, limit: number): string {
+  return value.length > limit ? `${value.slice(0, limit)}\n... [truncated]` : value;
+}
+
+async function fetchGitHubRepoMetadata(url: string, token?: string): Promise<{ owner: string; repo: string; defaultBranch: string; topLevelEntries: string[] }> {
+  const parsed = parseGitHubUrl(url);
+  if (!parsed) throw new Error("Invalid GitHub Pull Request URL.");
+
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "AI-Code-Reviewer/1.0",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const [repoRes, rootRes] = await Promise.all([
+    fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`, { headers }),
+    fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents`, { headers }),
+  ]);
+
+  if (!repoRes.ok) throw new Error(`Failed to fetch repository metadata: ${repoRes.status}`);
+  const repo = await repoRes.json();
+  const rootEntries = rootRes.ok ? await rootRes.json() as Array<{ name?: string }> : [];
+
+  return {
+    owner: parsed.owner,
+    repo: parsed.repo,
+    defaultBranch: repo.default_branch,
+    topLevelEntries: rootEntries.map((entry) => entry.name).filter((name): name is string => !!name).slice(0, 20),
+  };
+}
+
+async function fetchGitLabRepoMetadata(url: string, token?: string): Promise<{ projectPath: string; defaultBranch: string; topLevelEntries: string[] }> {
+  const parsed = parseGitLabUrl(url);
+  if (!parsed) throw new Error("Invalid GitLab Merge Request URL.");
+
+  const encodedPath = encodeURIComponent(parsed.projectPath);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["PRIVATE-TOKEN"] = token;
+
+  const [projectRes, treeRes] = await Promise.all([
+    fetch(`/api/gitlab/api/v4/projects/${encodedPath}`, { headers }),
+    fetch(`/api/gitlab/api/v4/projects/${encodedPath}/repository/tree?per_page=50`, { headers }),
+  ]);
+
+  if (!projectRes.ok) throw new Error(`Failed to fetch repository metadata: ${projectRes.status}`);
+  const project = await projectRes.json();
+  const tree = treeRes.ok ? await treeRes.json() as Array<{ name?: string }> : [];
+
+  return {
+    projectPath: parsed.projectPath,
+    defaultBranch: project.default_branch,
+    topLevelEntries: tree.map((entry) => entry.name).filter((name): name is string => !!name).slice(0, 20),
+  };
+}
+
+async function fetchGitHubRepoContextSources(url: string, token?: string): Promise<{ repoLabel: string; branch: string; topLevelEntries: string[]; sources: RepoContextSource[] }> {
+  const metadata = await fetchGitHubRepoMetadata(url, token);
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "AI-Code-Reviewer/1.0",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const sources = (await Promise.all(REPO_CONTEXT_CANDIDATE_PATHS.map(async (path) => {
+    const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+    const ref = encodeURIComponent(metadata.defaultBranch);
+    const res = await fetch(`https://api.github.com/repos/${metadata.owner}/${metadata.repo}/contents/${encodedPath}?ref=${ref}`, { headers });
+    if (!res.ok) return null;
+    const data = await res.json() as { content?: string; encoding?: string };
+    if (data.encoding !== "base64" || !data.content) return null;
+    return {
+      path,
+      content: truncateRepoContext(atob(data.content.replace(/\n/g, "")), 5000),
+    } satisfies RepoContextSource;
+  }))).filter((item): item is RepoContextSource => !!item);
+
+  return {
+    repoLabel: `${metadata.owner}/${metadata.repo}`,
+    branch: metadata.defaultBranch,
+    topLevelEntries: metadata.topLevelEntries,
+    sources,
+  };
+}
+
+async function fetchGitLabRepoContextSources(url: string, token?: string): Promise<{ repoLabel: string; branch: string; topLevelEntries: string[]; sources: RepoContextSource[] }> {
+  const metadata = await fetchGitLabRepoMetadata(url, token);
+  const encodedPath = encodeURIComponent(metadata.projectPath);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["PRIVATE-TOKEN"] = token;
+
+  const sources = (await Promise.all(REPO_CONTEXT_CANDIDATE_PATHS.map(async (path) => {
+    const encodedFile = encodeURIComponent(path);
+    const ref = encodeURIComponent(metadata.defaultBranch);
+    const res = await fetch(`/api/gitlab/api/v4/projects/${encodedPath}/repository/files/${encodedFile}/raw?ref=${ref}`, { headers });
+    if (!res.ok) return null;
+    return {
+      path,
+      content: truncateRepoContext(await res.text(), 5000),
+    } satisfies RepoContextSource;
+  }))).filter((item): item is RepoContextSource => !!item);
+
+  return {
+    repoLabel: metadata.projectPath,
+    branch: metadata.defaultBranch,
+    topLevelEntries: metadata.topLevelEntries,
+    sources,
+  };
+}
+
+export async function generateRepoContext(repoUrl: string, aiConfig: AIConfig, token?: string): Promise<string> {
+  if (!aiConfig.apiKey) {
+    throw new Error("OpenRouter API key is required. Please configure it in AI Settings.");
+  }
+
+  const repoContextData = parseGitHubUrl(repoUrl)
+    ? await fetchGitHubRepoContextSources(repoUrl, token)
+    : parseGitLabUrl(repoUrl)
+    ? await fetchGitLabRepoContextSources(repoUrl, token)
+    : null;
+
+  if (!repoContextData) {
+    throw new Error("Repo context generation currently supports GitHub PR URLs and GitLab MR URLs.");
+  }
+
+  if (repoContextData.sources.length === 0) {
+    throw new Error("No high-signal repo files were found to generate context from.");
+  }
+
+  const sourcesText = repoContextData.sources
+    .map((source) => `## ${source.path}\n${source.content}`)
+    .join("\n\n");
+
+  const prompt = `You are generating repository review memory for an AI code reviewer.
+
+Repository: ${repoContextData.repoLabel}
+Default branch: ${repoContextData.branch}
+Top-level entries: ${repoContextData.topLevelEntries.join(", ") || "Unknown"}
+
+Using the repository files below, draft concise but high-signal repo review memory that future code reviews should use.
+
+Output requirements:
+- Use short markdown sections
+- Focus on stable repo context, not temporary implementation details
+- Include:
+  - Purpose
+  - Architecture / structure
+  - Business or domain rules
+  - Review priorities
+  - Intentional patterns / tradeoffs
+  - Do not flag by default
+- Do not invent specifics that are not supported by the provided files
+- Keep it compact and reviewer-oriented
+
+Repository files:
+${sourcesText}`;
+
+  return callOpenRouterText(aiConfig.apiKey, getModelForTask(aiConfig, "summary"), [
+    { role: "system", content: "You write concise, reliable repository review memory for future AI code reviews." },
+    { role: "user", content: prompt },
+  ]);
+}
+
 const reviewerSuggestionCache = new Map<string, Promise<CodeReview["reviewerSuggestions"]>>();
 
 async function fetchGitHubCodeowners(mrData: MRData, token?: string): Promise<string | null> {
