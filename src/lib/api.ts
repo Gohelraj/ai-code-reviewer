@@ -990,7 +990,23 @@ function truncateRepoContext(value: string, limit: number): string {
   return value.length > limit ? `${value.slice(0, limit)}\n... [truncated]` : value;
 }
 
-async function fetchGitHubRepoMetadata(url: string, token?: string): Promise<{ owner: string; repo: string; defaultBranch: string; topLevelEntries: string[] }> {
+function pickAvailableRepoContextPaths(topLevelEntries: string[], docsEntries: string[] = []): string[] {
+  const rootSet = new Set(topLevelEntries);
+  const docsSet = new Set(docsEntries);
+
+  return REPO_CONTEXT_CANDIDATE_PATHS.filter((path) => {
+    if (!path.includes("/")) {
+      return rootSet.has(path);
+    }
+    if (path.startsWith("docs/")) {
+      if (!rootSet.has("docs")) return false;
+      return docsSet.has(path.slice("docs/".length));
+    }
+    return false;
+  });
+}
+
+async function fetchGitHubRepoMetadata(url: string, token?: string): Promise<{ owner: string; repo: string; defaultBranch: string; topLevelEntries: string[]; docsEntries: string[] }> {
   const parsed = parseGitHubUrl(url);
   if (!parsed) throw new Error("Invalid GitHub Pull Request URL.");
 
@@ -1009,16 +1025,21 @@ async function fetchGitHubRepoMetadata(url: string, token?: string): Promise<{ o
   if (!repoRes.ok) throw new Error(`Failed to fetch repository metadata: ${repoRes.status}`);
   const repo = await repoRes.json();
   const rootEntries = rootRes.ok ? await rootRes.json() as Array<{ name?: string }> : [];
+  const docsRes = rootEntries.some((entry) => entry.name === "docs")
+    ? await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents/docs?ref=${encodeURIComponent(repo.default_branch)}`, { headers })
+    : null;
+  const docsEntries = docsRes && docsRes.ok ? await docsRes.json() as Array<{ name?: string }> : [];
 
   return {
     owner: parsed.owner,
     repo: parsed.repo,
     defaultBranch: repo.default_branch,
     topLevelEntries: rootEntries.map((entry) => entry.name).filter((name): name is string => !!name).slice(0, 20),
+    docsEntries: docsEntries.map((entry) => entry.name).filter((name): name is string => !!name).slice(0, 20),
   };
 }
 
-async function fetchGitLabRepoMetadata(url: string, token?: string): Promise<{ projectPath: string; defaultBranch: string; topLevelEntries: string[] }> {
+async function fetchGitLabRepoMetadata(url: string, token?: string): Promise<{ projectPath: string; defaultBranch: string; topLevelEntries: string[]; docsEntries: string[] }> {
   const parsed = parseGitLabUrl(url);
   if (!parsed) throw new Error("Invalid GitLab Merge Request URL.");
 
@@ -1034,11 +1055,16 @@ async function fetchGitLabRepoMetadata(url: string, token?: string): Promise<{ p
   if (!projectRes.ok) throw new Error(`Failed to fetch repository metadata: ${projectRes.status}`);
   const project = await projectRes.json();
   const tree = treeRes.ok ? await treeRes.json() as Array<{ name?: string }> : [];
+  const docsRes = tree.some((entry) => entry.name === "docs")
+    ? await fetch(`/api/gitlab/api/v4/projects/${encodedPath}/repository/tree?path=docs&per_page=50`, { headers })
+    : null;
+  const docsTree = docsRes && docsRes.ok ? await docsRes.json() as Array<{ name?: string }> : [];
 
   return {
     projectPath: parsed.projectPath,
     defaultBranch: project.default_branch,
     topLevelEntries: tree.map((entry) => entry.name).filter((name): name is string => !!name).slice(0, 20),
+    docsEntries: docsTree.map((entry) => entry.name).filter((name): name is string => !!name).slice(0, 20),
   };
 }
 
@@ -1050,8 +1076,9 @@ async function fetchGitHubRepoContextSources(url: string, token?: string): Promi
     "User-Agent": "AI-Code-Reviewer/1.0",
   };
   if (token) headers.Authorization = `Bearer ${token}`;
+  const candidatePaths = pickAvailableRepoContextPaths(metadata.topLevelEntries, metadata.docsEntries);
 
-  const sources = (await Promise.all(REPO_CONTEXT_CANDIDATE_PATHS.map(async (path) => {
+  const sources = (await Promise.all(candidatePaths.map(async (path) => {
     const encodedPath = path.split("/").map(encodeURIComponent).join("/");
     const ref = encodeURIComponent(metadata.defaultBranch);
     const res = await fetch(`https://api.github.com/repos/${metadata.owner}/${metadata.repo}/contents/${encodedPath}?ref=${ref}`, { headers });
@@ -1077,8 +1104,9 @@ async function fetchGitLabRepoContextSources(url: string, token?: string): Promi
   const encodedPath = encodeURIComponent(metadata.projectPath);
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers["PRIVATE-TOKEN"] = token;
+  const candidatePaths = pickAvailableRepoContextPaths(metadata.topLevelEntries, metadata.docsEntries);
 
-  const sources = (await Promise.all(REPO_CONTEXT_CANDIDATE_PATHS.map(async (path) => {
+  const sources = (await Promise.all(candidatePaths.map(async (path) => {
     const encodedFile = encodeURIComponent(path);
     const ref = encodeURIComponent(metadata.defaultBranch);
     const res = await fetch(`/api/gitlab/api/v4/projects/${encodedPath}/repository/files/${encodedFile}/raw?ref=${ref}`, { headers });
