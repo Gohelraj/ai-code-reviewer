@@ -30,7 +30,7 @@ interface CodeReviewPanelProps {
     timestamp?: number;
   } | null;
   reviewLoading?: boolean;
-  onTriggerReview?: (reviewMode?: ReviewMode) => void;
+  onTriggerReview?: (reviewMode?: ReviewMode, options?: { fresh?: boolean }) => void;
   reviewMode?: ReviewMode;
   onReviewModeChange?: (reviewMode: ReviewMode) => void;
   onTokenChange?: (token: string) => void;
@@ -1199,6 +1199,19 @@ export function CodeReviewPanel({
                         <Play size={12} />
                       )}
                       {reviewLoading ? "Reviewing..." : `Re-run ${reviewMode === "quick" ? "Quick" : "Deep"}`}
+                    </button>
+                    <button
+                      onClick={() => onTriggerReview(reviewMode, { fresh: true })}
+                      disabled={reviewLoading}
+                      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-secondary disabled:opacity-50"
+                      title="Run the current review mode from scratch without comparing against the previous review"
+                    >
+                      {reviewLoading ? (
+                        <span className="w-3 h-3 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
+                      ) : (
+                        <RefreshCw size={12} />
+                      )}
+                      {reviewLoading ? "Reviewing..." : `Fresh ${reviewMode === "quick" ? "Quick" : "Deep"}`}
                     </button>
                   </div>
                 )}

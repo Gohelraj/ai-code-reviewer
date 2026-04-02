@@ -322,15 +322,18 @@ function App() {
     }
   }, [state.mrData, activeAIConfig, flowLoading, updateState, analysisUrl, rememberSavedEntry]);
 
-  const handleTriggerReview = useCallback(async (reviewModeOverride?: ReviewMode) => {
+  const handleTriggerReview = useCallback(async (reviewModeOverride?: ReviewMode, options?: { fresh?: boolean }) => {
     if (!state.mrData || !activeAIConfig || reviewLoading) return;
     setReviewLoading(true);
     const reviewConfig: AIConfig = {
       ...activeAIConfig,
       reviewMode: reviewModeOverride ?? activeAIConfig.reviewMode ?? "deep",
     };
-    const baselineReview = state.codeReview ?? state.previousReview ?? null;
-    const baselineMeta = state.codeReview
+    const useFreshBaseline = options?.fresh === true;
+    const baselineReview = useFreshBaseline ? null : (state.codeReview ?? state.previousReview ?? null);
+    const baselineMeta = useFreshBaseline
+      ? null
+      : state.codeReview
       ? {
           source: "rerun" as const,
           previousCommits: state.mrData.pr.commits,

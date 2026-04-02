@@ -36,7 +36,7 @@ interface ResultsDashboardProps {
   mrDescLoading: boolean;
   onTriggerFlow: () => void;
   onRefresh: () => void;
-  onTriggerReview: (reviewMode?: ReviewMode) => void;
+  onTriggerReview: (reviewMode?: ReviewMode, options?: { fresh?: boolean }) => void;
   onTriggerRequirements: () => void;
   onTriggerMRDescription: () => void;
   prUrl?: string;
