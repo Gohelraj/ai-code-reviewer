@@ -151,6 +151,7 @@ async function fetchGitLabMR(url: string, token?: string): Promise<MRData> {
 
   return {
     platform: "gitlab",
+    projectId: mr.project_id ?? mr.target_project_id ?? mr.source_project_id,
     pr: prInfo,
     diffRefs: mr.diff_refs ? {
       baseSha: mr.diff_refs.base_sha,
@@ -1039,7 +1040,7 @@ async function fetchGitHubRepoMetadata(url: string, token?: string): Promise<{ o
   };
 }
 
-async function fetchGitLabRepoMetadata(url: string, token?: string): Promise<{ projectPath: string; defaultBranch: string; topLevelEntries: string[]; docsEntries: string[] }> {
+async function fetchGitLabRepoMetadata(url: string, token?: string): Promise<{ projectPath: string; projectId: number | string; defaultBranch: string; topLevelEntries: string[]; docsEntries: string[] }> {
   const parsed = parseGitLabUrl(url);
   if (!parsed) throw new Error("Invalid GitLab Merge Request URL.");
 
@@ -1047,23 +1048,28 @@ async function fetchGitLabRepoMetadata(url: string, token?: string): Promise<{ p
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers["PRIVATE-TOKEN"] = token;
 
-  const [projectRes, treeRes] = await Promise.all([
-    fetch(`/api/gitlab/api/v4/projects/${encodedPath}`, { headers }),
-    fetch(`/api/gitlab/api/v4/projects/${encodedPath}/repository/tree?per_page=50`, { headers }),
-  ]);
+  const mrRes = await fetch(`/api/gitlab/api/v4/projects/${encodedPath}/merge_requests/${parsed.mrIid}`, { headers });
+  if (!mrRes.ok) throw new Error(`Failed to fetch merge request metadata: ${mrRes.status}`);
+  const mr = await mrRes.json();
+  const projectId = mr.project_id ?? mr.target_project_id ?? mr.source_project_id;
+  if (!projectId) throw new Error("GitLab merge request response did not include a project id.");
 
+  const projectRes = await fetch(`/api/gitlab/api/v4/projects/${encodeURIComponent(String(projectId))}`, { headers });
   if (!projectRes.ok) throw new Error(`Failed to fetch repository metadata: ${projectRes.status}`);
   const project = await projectRes.json();
-  const tree = treeRes.ok ? await treeRes.json() as Array<{ name?: string }> : [];
-  const docsRes = tree.some((entry) => entry.name === "docs")
-    ? await fetch(`/api/gitlab/api/v4/projects/${encodedPath}/repository/tree?path=docs&per_page=50`, { headers })
+  const encodedProjectId = encodeURIComponent(String(project.id));
+  const treeRes = await fetch(`/api/gitlab/api/v4/projects/${encodedProjectId}/repository/tree?per_page=50`, { headers });
+  const rootTree = treeRes.ok ? await treeRes.json() as Array<{ name?: string }> : [];
+  const docsRes = rootTree.some((entry) => entry.name === "docs")
+    ? await fetch(`/api/gitlab/api/v4/projects/${encodedProjectId}/repository/tree?path=docs&per_page=50`, { headers })
     : null;
   const docsTree = docsRes && docsRes.ok ? await docsRes.json() as Array<{ name?: string }> : [];
 
   return {
     projectPath: parsed.projectPath,
+    projectId: project.id,
     defaultBranch: project.default_branch,
-    topLevelEntries: tree.map((entry) => entry.name).filter((name): name is string => !!name).slice(0, 20),
+    topLevelEntries: rootTree.map((entry) => entry.name).filter((name): name is string => !!name).slice(0, 20),
     docsEntries: docsTree.map((entry) => entry.name).filter((name): name is string => !!name).slice(0, 20),
   };
 }
@@ -1101,7 +1107,7 @@ async function fetchGitHubRepoContextSources(url: string, token?: string): Promi
 
 async function fetchGitLabRepoContextSources(url: string, token?: string): Promise<{ repoLabel: string; branch: string; topLevelEntries: string[]; sources: RepoContextSource[] }> {
   const metadata = await fetchGitLabRepoMetadata(url, token);
-  const encodedPath = encodeURIComponent(metadata.projectPath);
+  const encodedProjectId = encodeURIComponent(String(metadata.projectId));
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers["PRIVATE-TOKEN"] = token;
   const candidatePaths = pickAvailableRepoContextPaths(metadata.topLevelEntries, metadata.docsEntries);
@@ -1109,7 +1115,7 @@ async function fetchGitLabRepoContextSources(url: string, token?: string): Promi
   const sources = (await Promise.all(candidatePaths.map(async (path) => {
     const encodedFile = encodeURIComponent(path);
     const ref = encodeURIComponent(metadata.defaultBranch);
-    const res = await fetch(`/api/gitlab/api/v4/projects/${encodedPath}/repository/files/${encodedFile}/raw?ref=${ref}`, { headers });
+    const res = await fetch(`/api/gitlab/api/v4/projects/${encodedProjectId}/repository/files/${encodedFile}/raw?ref=${ref}`, { headers });
     if (!res.ok) return null;
     return {
       path,
@@ -1125,12 +1131,57 @@ async function fetchGitLabRepoContextSources(url: string, token?: string): Promi
   };
 }
 
-export async function generateRepoContext(repoUrl: string, aiConfig: AIConfig, token?: string): Promise<string> {
+async function fetchGitLabRepoContextSourcesFromMRData(mrData: MRData, token?: string): Promise<{ repoLabel: string; branch: string; topLevelEntries: string[]; sources: RepoContextSource[] }> {
+  if (mrData.platform !== "gitlab" || !mrData.projectId) {
+    throw new Error("Loaded MR data does not include a GitLab project id.");
+  }
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["PRIVATE-TOKEN"] = token;
+
+  const encodedProjectId = encodeURIComponent(String(mrData.projectId));
+  const projectRes = await fetch(`/api/gitlab/api/v4/projects/${encodedProjectId}`, { headers });
+  if (!projectRes.ok) throw new Error(`Failed to fetch repository metadata: ${projectRes.status}`);
+  const project = await projectRes.json();
+
+  const treeRes = await fetch(`/api/gitlab/api/v4/projects/${encodedProjectId}/repository/tree?per_page=50`, { headers });
+  const rootTree = treeRes.ok ? await treeRes.json() as Array<{ name?: string }> : [];
+  const docsRes = rootTree.some((entry) => entry.name === "docs")
+    ? await fetch(`/api/gitlab/api/v4/projects/${encodedProjectId}/repository/tree?path=docs&per_page=50`, { headers })
+    : null;
+  const docsTree = docsRes && docsRes.ok ? await docsRes.json() as Array<{ name?: string }> : [];
+  const candidatePaths = pickAvailableRepoContextPaths(
+    rootTree.map((entry) => entry.name).filter((name): name is string => !!name),
+    docsTree.map((entry) => entry.name).filter((name): name is string => !!name),
+  );
+
+  const sources = (await Promise.all(candidatePaths.map(async (path) => {
+    const encodedFile = encodeURIComponent(path);
+    const ref = encodeURIComponent(project.default_branch);
+    const res = await fetch(`/api/gitlab/api/v4/projects/${encodedProjectId}/repository/files/${encodedFile}/raw?ref=${ref}`, { headers });
+    if (!res.ok) return null;
+    return {
+      path,
+      content: truncateRepoContext(await res.text(), 5000),
+    } satisfies RepoContextSource;
+  }))).filter((item): item is RepoContextSource => !!item);
+
+  return {
+    repoLabel: parseGitLabUrl(mrData.pr.url)?.projectPath ?? String(mrData.projectId),
+    branch: project.default_branch,
+    topLevelEntries: rootTree.map((entry) => entry.name).filter((name): name is string => !!name).slice(0, 20),
+    sources,
+  };
+}
+
+export async function generateRepoContext(repoUrl: string, aiConfig: AIConfig, token?: string, mrData?: MRData | null): Promise<string> {
   if (!aiConfig.apiKey) {
     throw new Error("OpenRouter API key is required. Please configure it in AI Settings.");
   }
 
-  const repoContextData = parseGitHubUrl(repoUrl)
+  const repoContextData = mrData?.platform === "gitlab" && mrData.projectId
+    ? await fetchGitLabRepoContextSourcesFromMRData(mrData, token)
+    : parseGitHubUrl(repoUrl)
     ? await fetchGitHubRepoContextSources(repoUrl, token)
     : parseGitLabUrl(repoUrl)
     ? await fetchGitLabRepoContextSources(repoUrl, token)

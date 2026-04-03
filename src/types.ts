@@ -37,6 +37,8 @@ export interface MRData {
   files: FileDiff[];
   /** GitLab diff_refs needed for inline MR comments with position */
   diffRefs?: DiffRefs;
+  /** GitLab numeric project id for follow-up repository API calls */
+  projectId?: number | string;
 }
 
 export interface KeyChange {

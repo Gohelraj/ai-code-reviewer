@@ -602,6 +602,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
                   onChange={setLocalAIConfig}
                   repoUrl={prUrl}
                   repoToken={prToken}
+                  mrData={mrData}
                 />
                 <AISettings config={localAIConfig} onChange={setLocalAIConfig} repoKey={repoKey} />
               </div>

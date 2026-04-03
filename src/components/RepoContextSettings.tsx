@@ -2,6 +2,7 @@ import { useState } from "react";
 import { BookOpenText, RefreshCw, Sparkles } from "lucide-react";
 import toast from "react-hot-toast";
 import type { AIConfig } from "./AISettings";
+import type { MRData } from "../types";
 import { generateRepoContext } from "../lib/api";
 
 interface RepoContextSettingsProps {
@@ -10,9 +11,10 @@ interface RepoContextSettingsProps {
   disabled?: boolean;
   repoUrl?: string;
   repoToken?: string;
+  mrData?: MRData | null;
 }
 
-export function RepoContextSettings({ config, onChange, disabled, repoUrl, repoToken }: RepoContextSettingsProps) {
+export function RepoContextSettings({ config, onChange, disabled, repoUrl, repoToken, mrData }: RepoContextSettingsProps) {
   const [generating, setGenerating] = useState(false);
   const canGenerate = !!repoUrl && !!config.apiKey && !disabled && !generating;
   const hasRepoContext = !!config.repoMemory?.trim();
@@ -46,7 +48,7 @@ export function RepoContextSettings({ config, onChange, disabled, repoUrl, repoT
             }
             setGenerating(true);
             try {
-              const generated = await generateRepoContext(repoUrl, config, repoToken);
+              const generated = await generateRepoContext(repoUrl, config, repoToken, mrData);
               onChange({ ...config, repoMemory: generated });
               toast.success("Repo context generated from repository files");
             } catch (error) {
