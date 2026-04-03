@@ -9,7 +9,7 @@ import {
 import toast from "react-hot-toast";
 import { formatDistanceToNow } from "date-fns";
 import type { CodeReview, ReviewIssue, MRData, RequirementsCheck, MRDescriptionReview, ReviewChatMessage } from "../types";
-import { postReviewComment, postInlineComments, fetchPostedIssueIds, buildIssueMarkdown, type InlinePostResult } from "../lib/github-comment";
+import { postReviewComment, postInlineComments, fetchPostedIssueIds, buildIssueMarkdown, type CommentDeliveryNote, type InlinePostResult } from "../lib/github-comment";
 import ConfirmModal from "./ConfirmModal";
 import type { AIConfig, PostingMode, ReviewMode } from "./AISettings";
 import { ReviewModePicker } from "./ReviewModePicker";
@@ -207,6 +207,7 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
   onGenerateFix?: () => void;
 }) {
   const [expanded, setExpanded] = useState(issue.severity === "critical" && !dismissed || !!highlighted);
+  const [evidenceExpanded, setEvidenceExpanded] = useState(false);
   const [issueCopied, setIssueCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
@@ -361,34 +362,6 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
                 <p className="text-sm text-foreground leading-relaxed">{issue.rationale}</p>
               </div>
 
-              {issue.evidence && issue.evidence.length > 0 && (
-                <div className="rounded-xl border border-border bg-card/70 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Evidence</p>
-                  <div className="space-y-3">
-                    {issue.evidence.map((evidence, evidenceIndex) => (
-                      <div key={`${issue.id}-evidence-${evidenceIndex}`} className="rounded-lg border border-border bg-secondary/40 px-3 py-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-[11px] font-semibold uppercase tracking-wide text-foreground bg-background border border-border px-2 py-0.5 rounded-md">
-                            {evidence.type.replace(/_/g, " ")}
-                          </span>
-                          {evidence.file && (
-                            <span className="text-[11px] font-mono text-muted-foreground">
-                              {evidence.file}{evidence.lineHint ? ` · ${evidence.lineHint}` : ""}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-sm text-foreground mt-2 leading-relaxed">{evidence.summary}</p>
-                        {evidence.snippet && (
-                          <pre className="mt-3 text-xs font-mono rounded-lg border border-border bg-background p-3 overflow-x-auto whitespace-pre-wrap break-words text-foreground">
-                            <code>{evidence.snippet}</code>
-                          </pre>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {issue.currentCode && (
                 <CodeBlock code={issue.currentCode} label="Problematic Code" variant="destructive" />
               )}
@@ -406,6 +379,56 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
 
               {generatedFix && (
                 <CodeBlock code={generatedFix} label="Generated Fix Suggestion" variant="accent" />
+              )}
+
+              {issue.evidence && issue.evidence.length > 0 && (
+                <div className="rounded-xl border border-border bg-card/70">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEvidenceExpanded((current) => !current);
+                    }}
+                    aria-expanded={evidenceExpanded}
+                    className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-secondary/30 transition-colors rounded-xl"
+                  >
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Evidence</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {issue.evidence.length} supporting item{issue.evidence.length === 1 ? "" : "s"} available
+                      </p>
+                    </div>
+                    {evidenceExpanded ? (
+                      <ChevronUp size={14} className="text-muted-foreground flex-shrink-0" />
+                    ) : (
+                      <ChevronDown size={14} className="text-muted-foreground flex-shrink-0" />
+                    )}
+                  </button>
+                  {evidenceExpanded && (
+                    <div className="border-t border-border px-4 py-4 space-y-3">
+                      {issue.evidence.map((evidence, evidenceIndex) => (
+                        <div key={`${issue.id}-evidence-${evidenceIndex}`} className="rounded-lg border border-border bg-secondary/40 px-3 py-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] font-semibold uppercase tracking-wide text-foreground bg-background border border-border px-2 py-0.5 rounded-md">
+                              {evidence.type.replace(/_/g, " ")}
+                            </span>
+                            {evidence.file && (
+                              <span className="text-[11px] font-mono text-muted-foreground">
+                                {evidence.file}{evidence.lineHint ? ` · ${evidence.lineHint}` : ""}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm text-foreground mt-2 leading-relaxed">{evidence.summary}</p>
+                          {evidence.snippet && (
+                            <pre className="mt-3 text-xs font-mono rounded-lg border border-border bg-background p-3 overflow-x-auto whitespace-pre-wrap break-words text-foreground">
+                              <code>{evidence.snippet}</code>
+                            </pre>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </>
           )}
@@ -729,6 +752,7 @@ export function CodeReviewPanel({
   const [copied, setCopied] = useState(false);
   const [posting, setPosting] = useState(false);
   const [postingSelected, setPostingSelected] = useState(false);
+  const [deliveryNotes, setDeliveryNotes] = useState<CommentDeliveryNote[]>([]);
   const [selectedIssues, setSelectedIssues] = useState<Set<string>>(new Set());
   const [localToken, setLocalToken] = useState("");
   const [rememberToken, setRememberToken] = useState(false);
@@ -1028,6 +1052,7 @@ export function CodeReviewPanel({
     if (!prUrl || !effectiveToken || selectedCount === 0) return;
     const selectedList = review.issues.filter((i) => selectedIssues.has(i.id));
     setPostingSelected(true);
+    setDeliveryNotes([]);
     try {
       const result = await postInlineComments({
         url: prUrl,
@@ -1046,6 +1071,8 @@ export function CodeReviewPanel({
         });
       }
 
+      setDeliveryNotes(result.deliveryNotes);
+
       const parts: string[] = [];
       if (result.inline > 0) parts.push(`${result.inline} inline`);
       if (result.general > 0) parts.push(`${result.general} general`);
@@ -1053,6 +1080,13 @@ export function CodeReviewPanel({
 
       if (result.failed === 0) {
         toast.success(`Posted ${result.total} comment${result.total !== 1 ? "s" : ""}: ${parts.join(", ")}`);
+        if (result.deliveryNotes.length > 0) {
+          const platform = mrData?.platform === "gitlab" ? "MR" : "PR";
+          const detail = result.deliveryNotes.length === 1
+            ? result.deliveryNotes[0].reason
+            : `${result.deliveryNotes.length} comments were posted as general ${platform} notes. Delivery details are shown above the issue list.`;
+          toast(detail, { duration: 5000 });
+        }
         deselectAll();
       } else {
         toast.error(`${parts.join(", ")}. Errors: ${result.errors.slice(0, 2).join("; ")}`);
@@ -1493,6 +1527,45 @@ export function CodeReviewPanel({
               )}
             </div>
           </div>
+
+          {deliveryNotes.length > 0 && (
+            <div className="mb-4 rounded-2xl border border-yellow-200 bg-yellow-50 p-4 dark:border-yellow-500/20 dark:bg-yellow-500/10">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-yellow-700 dark:text-yellow-300">
+                    Comment Delivery Details
+                  </h4>
+                  <p className="mt-1 text-xs text-yellow-700/90 dark:text-yellow-200/80">
+                    These comments were posted as general {mrData?.platform === "gitlab" ? "MR" : "PR"} notes instead of inline comments.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setDeliveryNotes([])}
+                  className="text-xs text-yellow-700/90 hover:text-yellow-900 dark:text-yellow-200/80 dark:hover:text-yellow-100 transition-colors"
+                >
+                  Dismiss
+                </button>
+              </div>
+              <div className="mt-3 space-y-2">
+                {deliveryNotes.map((note) => {
+                  const matchingIssue = review.issues.find((issue) => issue.id === note.issueId);
+                  return (
+                    <button
+                      key={`${note.issueId}-${note.reason}`}
+                      onClick={() => {
+                        onSelectedIssueChange?.(note.issueId);
+                        if (matchingIssue?.file) onSelectedFileChange?.(matchingIssue.file);
+                      }}
+                      className="w-full rounded-xl border border-yellow-200 bg-card px-4 py-3 text-left hover:bg-yellow-50/70 transition-colors dark:border-yellow-500/20 dark:bg-card dark:hover:bg-yellow-500/5"
+                    >
+                      <p className="text-sm font-medium text-foreground">{note.issueTitle}</p>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{note.reason}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {groupBy === "severity" ? (
             <div className="space-y-3">

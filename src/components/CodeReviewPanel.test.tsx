@@ -150,6 +150,8 @@ describe("CodeReviewPanel", () => {
     expect(await screen.findByText("HIGH CONF")).toBeInTheDocument();
     expect(screen.getByText("VERIFIED")).toBeInTheDocument();
     expect(screen.getByText("Auth checks are missing on a public entry point.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Evidence/i })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("The new handler path returns before checking req.user.")).not.toBeInTheDocument();
     expect(screen.getByText("Test Gap Signal")).toBeInTheDocument();
     expect(screen.getByText("Verification Summary")).toBeInTheDocument();
     const relatedContextToggle = screen.getByRole("button", { name: /Related Context Retrieved/i });
@@ -170,6 +172,9 @@ describe("CodeReviewPanel", () => {
     await user.click(relatedContextToggle);
     expect(screen.getByText("Imported by src/auth.ts and still calls the unguarded handler.")).toBeInTheDocument();
     expect(screen.getByText("router.get('/account', authHandler);")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Evidence/i }));
+    expect(screen.getByText("The new handler path returns before checking req.user.")).toBeInTheDocument();
 
     await user.click(riskHotspotsToggle);
     const hotspotsSection = riskHotspotsToggle.closest("div");

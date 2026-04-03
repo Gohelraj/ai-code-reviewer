@@ -13,6 +13,15 @@ export interface InlinePostResult {
   failed: number;
   errors: string[];
   postedIds: string[];
+  deliveryNotes: CommentDeliveryNote[];
+}
+
+export interface CommentDeliveryNote {
+  issueId: string;
+  issueTitle: string;
+  platform: "github" | "gitlab";
+  delivery: "general";
+  reason: string;
 }
 
 function parseGitHubUrl(url: string): { owner: string; repo: string; number: string } | null {
@@ -39,6 +48,58 @@ export function parseLineNumber(lineHint: string): number | null {
   const numMatch = lineHint.match(/(\d+)/);
   if (numMatch) return parseInt(numMatch[1], 10);
   return null;
+}
+
+function compactApiError(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
+}
+
+function describeGeneralCommentReason({
+  platform,
+  mode,
+  issue,
+  lineNum,
+  hasPosition,
+  diffRefsAvailable,
+  inlineError,
+}: {
+  platform: "github" | "gitlab";
+  mode: "inline" | "general";
+  issue: ReviewIssue;
+  lineNum: number | null;
+  hasPosition: boolean;
+  diffRefsAvailable: boolean;
+  inlineError?: string;
+}): string {
+  if (mode === "general") {
+    return "Posting preference is set to general comments.";
+  }
+
+  if (inlineError) {
+    const platformLabel = platform === "gitlab" ? "GitLab" : "GitHub";
+    return `${platformLabel} rejected the inline position: ${compactApiError(inlineError)}`;
+  }
+
+  if (!issue.file) {
+    return "This issue does not include a file path, so inline positioning was unavailable.";
+  }
+
+  if (lineNum === null) {
+    return issue.lineHint?.trim()
+      ? `The line hint "${issue.lineHint}" could not be parsed into a single line number.`
+      : "This issue does not include a line hint, so inline positioning was unavailable.";
+  }
+
+  if (!hasPosition) {
+    return "Inline positioning data was incomplete, so the comment was posted as a general note.";
+  }
+
+  if (platform === "gitlab" && !diffRefsAvailable) {
+    return "GitLab diff refs were unavailable for this merge request, so inline positioning could not be created.";
+  }
+
+  return "The comment was posted as a general note because inline positioning was not available.";
 }
 
 /** Build markdown body for a single issue */
@@ -137,7 +198,7 @@ export async function postInlineComments({
   overrideBodies?: Record<string, string>;
   mode?: "inline" | "general";
 }): Promise<InlinePostResult> {
-  const result: InlinePostResult = { total: issues.length, inline: 0, general: 0, failed: 0, errors: [], postedIds: [] };
+  const result: InlinePostResult = { total: issues.length, inline: 0, general: 0, failed: 0, errors: [], postedIds: [], deliveryNotes: [] };
 
   const gitlab = parseGitLabUrl(url);
   const github = parseGitHubUrl(url);
@@ -150,6 +211,14 @@ export async function postInlineComments({
     try {
       if (gitlab) {
         const encodedPath = encodeURIComponent(gitlab.projectPath);
+        let generalReason = describeGeneralCommentReason({
+          platform: "gitlab",
+          mode,
+          issue,
+          lineNum,
+          hasPosition,
+          diffRefsAvailable: !!diffRefs,
+        });
 
         if (mode === "inline" && hasPosition && diffRefs) {
           // Post as inline discussion with position
@@ -184,6 +253,15 @@ export async function postInlineComments({
 
           // If inline fails (e.g. line not in diff), fall back to general note
           const errText = await res.text();
+          generalReason = describeGeneralCommentReason({
+            platform: "gitlab",
+            mode,
+            issue,
+            lineNum,
+            hasPosition,
+            diffRefsAvailable: !!diffRefs,
+            inlineError: errText,
+          });
           console.warn(`Inline comment failed for ${issue.file}:${lineNum}, falling back to note. Error: ${errText}`);
         }
 
@@ -207,6 +285,13 @@ export async function postInlineComments({
         if (res.ok) {
           result.general++;
           result.postedIds.push(issue.id);
+          result.deliveryNotes.push({
+            issueId: issue.id,
+            issueTitle: issue.title,
+            platform: "gitlab",
+            delivery: "general",
+            reason: generalReason,
+          });
         } else {
           const text = await res.text();
           result.failed++;
@@ -214,6 +299,15 @@ export async function postInlineComments({
         }
       } else if (github) {
         // GitHub: use pull request review comments API for inline, issues comments for general
+        let generalReason = describeGeneralCommentReason({
+          platform: "github",
+          mode,
+          issue,
+          lineNum,
+          hasPosition,
+          diffRefsAvailable: true,
+        });
+
         if (mode === "inline" && hasPosition) {
           const res = await fetch(
             `https://api.github.com/repos/${github.owner}/${github.repo}/pulls/${github.number}/comments`,
@@ -241,6 +335,16 @@ export async function postInlineComments({
           }
 
           // Fall back to general comment
+          const errText = await res.text();
+          generalReason = describeGeneralCommentReason({
+            platform: "github",
+            mode,
+            issue,
+            lineNum,
+            hasPosition,
+            diffRefsAvailable: true,
+            inlineError: errText,
+          });
           console.warn(`Inline comment failed for ${issue.file}:${lineNum}, falling back to issue comment.`);
         }
 
@@ -266,6 +370,13 @@ export async function postInlineComments({
         if (res.ok) {
           result.general++;
           result.postedIds.push(issue.id);
+          result.deliveryNotes.push({
+            issueId: issue.id,
+            issueTitle: issue.title,
+            platform: "github",
+            delivery: "general",
+            reason: generalReason,
+          });
         } else {
           const text = await res.text();
           result.failed++;

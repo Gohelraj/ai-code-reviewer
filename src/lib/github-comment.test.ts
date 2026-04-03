@@ -63,6 +63,13 @@ describe("github-comment helpers", () => {
 
     expect(result.general).toBe(1);
     expect(result.inline).toBe(0);
+    expect(result.deliveryNotes).toEqual([
+      expect.objectContaining({
+        issueId: "issue-1",
+        platform: "github",
+        reason: "Posting preference is set to general comments.",
+      }),
+    ]);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.github.com/repos/acme/repo/issues/42/comments",
       expect.objectContaining({ method: "POST" }),
@@ -91,6 +98,13 @@ describe("github-comment helpers", () => {
     expect(result.inline).toBe(0);
     expect(result.general).toBe(1);
     expect(result.failed).toBe(0);
+    expect(result.deliveryNotes).toEqual([
+      expect.objectContaining({
+        issueId: "issue-1",
+        platform: "github",
+        reason: expect.stringContaining("GitHub rejected the inline position: line is outside the diff"),
+      }),
+    ]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
