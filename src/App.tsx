@@ -199,7 +199,7 @@ function App() {
   }, []);
 
   const handleLoadHistory = useCallback((entry: HistoryEntry) => {
-    setState(entry.state);
+    setState({ ...entry.state, activeTab: "summary" });
     setActiveAIConfig(sanitizeAIConfig(entry.aiConfig));
     setAnalysisUrl(entry.url);
     setReviewLoading(false);
@@ -207,7 +207,7 @@ function App() {
     setLoadedFromHistory(true);
     setLoadedHistoryTimestamp(entry.timestamp);
     writeUiStateToLocation({
-      activeTab: entry.state.activeTab,
+      activeTab: "summary",
       selectedFile: entry.state.selectedFile,
       selectedIssueId: entry.state.selectedIssueId,
     });

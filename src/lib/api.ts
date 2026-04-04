@@ -1415,7 +1415,7 @@ export async function analyzeSummary(mrData: MRData, aiConfig: AIConfig): Promis
 
   if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required. Please configure it in AI Settings.");
 
-  const systemPrompt = `You are an expert software engineer reviewing a pull/merge request. Analyze the PR and produce a structured summary. Always return valid JSON matching the exact schema.`;
+  const systemPrompt = `You are an expert software engineer reviewing a pull/merge request. Analyze the PR and produce a structured summary. Always return valid JSON matching the exact schema.\nKeep all text fields concise: short bullet points or 1-sentence values. Avoid prose paragraphs. No filler openers.`;
   const userPrompt = `PR Title: ${pr.title}
 PR Description: ${pr.description || "No description provided"}
 Base Branch: ${pr.baseBranch} → Head Branch: ${pr.headBranch}
@@ -1492,9 +1492,21 @@ Use the full file content (when present) to catch issues that only appear in con
   Be precise: always provide the exact file path and line reference when flagging an issue.
   IMPORTANT: overallScore must be a decimal between 0.0 and 10.0 (e.g. 6.5, not 65).
   Always return valid JSON. For optional string fields (file, lineHint, currentCode, impact) always provide a string value (use "" if not applicable).
+
+  OUTPUT STYLE — keep all text fields terse and scannable. No prose paragraphs:
+  - rationale: 1 sentence — why this matters specifically in this PR
+  - impact: 1 short phrase (e.g. "Crashes on null input", "Auth bypass risk", "Silently swallows errors")
+  - suggestedFix: imperative action + minimal code snippet if helpful; no preamble
+  - evidence[].summary: 1 sentence citing the relevant file/line
+  - strengths / architectureNotes / securityPosture / performancePosture: bullet points only, ≤ 8 words per bullet
+  - reviewDiff / testGapSummary: 1-3 bullets or 2 sentences max
+  - verificationSummary: 2 sentences max — verified vs. uncertain
+  - contextInsights[].reason: 1 sentence
+  Avoid openers like "This change introduces…", "It is worth noting…", "Overall, the PR…"
+
   For each issue:
   - set confidence to low, medium, or high based on how strongly the evidence supports the finding
-  - set rationale to 1-2 sentences explaining why the finding matters in this specific PR
+  - set rationale to 1 sentence explaining why the finding matters in this specific PR
   - set fixable to true when a concrete code-level fix can be proposed from the provided context${
     structuredRepoMemory
       ? "\n- treat REPOSITORY REVIEW MEMORY as high-priority context about intentional patterns, business rules, and what should or should not be flagged for this repo"
@@ -1510,8 +1522,7 @@ Use the full file content (when present) to catch issues that only appear in con
   }
   - add verificationStatus as "verified" when the evidence is directly supported by the supplied code/context, otherwise "uncertain"
   - include evidence entries for each issue, using the most relevant sources from diff, full file, related files, tests, contracts, or repo memory
-  - include contextInsights summarising the most useful retrieved files that influenced the review
-  - use verificationSummary to explain what was cross-checked versus what remains uncertain`;
+  - include contextInsights listing only the files that meaningfully influenced the review`;
 
   const userPrompt = `PR Title: ${pr.title}
   PR Description: ${pr.description || "No description"}
@@ -1551,9 +1562,11 @@ Use the full file content (when present) to catch issues that only appear in con
     [
       {
         role: "system",
-        content: `You are verifying candidate code-review findings. Keep only findings supported by the supplied diff, full-file context, related repository context, and repo memory. 
-Return the same issues with corrected confidence, verificationStatus, rationale, and evidence. 
+        content: `You are verifying candidate code-review findings. Keep only findings supported by the supplied diff, full-file context, related repository context, and repo memory.
+Return the same issues with corrected confidence, verificationStatus, rationale, and evidence.
 If a finding may still be real but is not fully supported, mark it as uncertain instead of inventing certainty.
+Keep all text fields terse: rationale ≤ 1 sentence, impact ≤ 1 phrase, evidence[].summary ≤ 1 sentence each.
+verificationSummary: 2 sentences max — what was verified vs. what remains uncertain.
 Always return valid JSON.`,
       },
       {
@@ -1710,7 +1723,13 @@ Extract every requirement, acceptance criterion, and deliverable from the issue 
 
 Be thorough: check edge cases, error handling, UI requirements, API contracts, and testing requirements mentioned in the issue.
 coverageScore must be a number between 0 and 100.
-Always return valid JSON.`;
+Always return valid JSON.
+OUTPUT STYLE — keep all text fields terse:
+- issueSummary: 1-2 sentences
+- requirements[].evidence: 1 sentence citing specific file/line when possible
+- requirements[].notes: 1 sentence, or "" if evidence is sufficient
+- missingItems: short phrases, not full sentences
+- suggestions: imperative phrases (e.g. "Add unit test for X"), 1 per item, no elaboration`;
 
   const userPrompt = `ISSUE TITLE: ${issue.title}
 ISSUE DESCRIPTION:
@@ -1786,7 +1805,12 @@ A good MR description should include:
 
 qualityScore must be a number between 0 and 100.
 For suggestedDescription, write a complete improved MR description in markdown that the author could copy-paste.
-Always return valid JSON.`;
+Always return valid JSON.
+OUTPUT STYLE — keep text fields terse:
+- strengths: short bullet phrases (≤ 6 words each)
+- suggestions[].suggestion: 1 imperative sentence
+- suggestions[].example: a concrete snippet or short example only, no explanation prose
+Avoid verbose explanations in strengths/suggestions.`;
 
   const userPrompt = `MR TITLE: ${mrData.pr.title}
 MR DESCRIPTION:

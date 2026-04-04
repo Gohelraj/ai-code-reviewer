@@ -6,10 +6,13 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import type { MRDescriptionReview } from "../types";
+import { ExpandableText } from "./ExpandableText";
+import type { ResultViewMode } from "./ResultViewToggle";
 
 interface MRDescriptionPanelProps {
   review: MRDescriptionReview;
   currentDescription?: string;
+  viewMode?: ResultViewMode;
 }
 
 const QUALITY_CONFIG = {
@@ -25,11 +28,12 @@ const PRIORITY_CONFIG = {
   low: { badge: "bg-blue-500 text-background", label: "Low" },
 };
 
-export function MRDescriptionPanel({ review, currentDescription }: MRDescriptionPanelProps) {
+export function MRDescriptionPanel({ review, currentDescription, viewMode = "detailed" }: MRDescriptionPanelProps) {
   const [showSuggested, setShowSuggested] = useState(false);
   const [copiedSuggested, setCopiedSuggested] = useState(false);
   const [copiedFull, setCopiedFull] = useState(false);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const compact = viewMode === "compact";
 
   const quality = QUALITY_CONFIG[review.currentQuality] ?? QUALITY_CONFIG.needs_improvement;
   const pct = review.qualityScore;
@@ -117,11 +121,15 @@ export function MRDescriptionPanel({ review, currentDescription }: MRDescription
               <Star size={14} />
               Description Quality Score
             </p>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              {review.suggestions.length === 0
+            <ExpandableText
+              text={review.suggestions.length === 0
                 ? "Your MR description looks great!"
                 : `${review.suggestions.length} suggestion${review.suggestions.length !== 1 ? "s" : ""} to improve your description.`}
-            </p>
+              collapsedLines={2}
+              minLength={80}
+              defaultExpanded={!compact}
+              className="text-sm text-muted-foreground leading-relaxed"
+            />
           </div>
         </div>
 
@@ -157,7 +165,14 @@ export function MRDescriptionPanel({ review, currentDescription }: MRDescription
           </h3>
           <div className="rounded-xl border border-border bg-secondary/50 p-4">
             {currentDescription ? (
-              <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words leading-relaxed">{currentDescription}</pre>
+              <ExpandableText
+                text={currentDescription}
+                collapsedLines={compact ? 6 : 14}
+                minLength={compact ? 220 : 480}
+                defaultExpanded={!compact}
+                preserveWhitespace
+                className="text-xs font-mono text-foreground break-words leading-relaxed"
+              />
             ) : (
               <p className="text-sm text-muted-foreground italic">No description provided</p>
             )}
@@ -173,8 +188,8 @@ export function MRDescriptionPanel({ review, currentDescription }: MRDescription
             Strengths
           </h3>
           <div className="space-y-2">
-            {review.strengths.map((s, i) => (
-              <div key={i} className="flex items-start gap-2.5">
+            {review.strengths.map((s) => (
+              <div key={s} className="flex items-start gap-2.5">
                 <div className="w-5 h-5 rounded-full bg-accent/10 flex items-center justify-center flex-shrink-0 mt-0.5">
                   <CheckCircle2 size={11} className="text-accent" />
                 </div>
@@ -198,7 +213,7 @@ export function MRDescriptionPanel({ review, currentDescription }: MRDescription
               const isExpanded = expandedIdx === i;
               return (
                 <motion.div
-                  key={i}
+                  key={sug.suggestion.slice(0, 40)}
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.04, duration: 0.3 }}
@@ -206,11 +221,11 @@ export function MRDescriptionPanel({ review, currentDescription }: MRDescription
                 >
                   <button
                     onClick={() => setExpandedIdx(isExpanded ? null : i)}
-                    className="w-full flex items-center gap-3 px-5 py-4 hover:bg-secondary/30 transition-colors text-left"
+                    className="w-full flex items-center gap-3 px-5 py-3 hover:bg-secondary/30 transition-colors text-left"
                   >
                     <Lightbulb size={16} className="flex-shrink-0 text-yellow-500" />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className={`text-xs font-bold px-2 py-0.5 rounded-md ${prio.badge}`}>
                           {prio.label.toUpperCase()}
                         </span>
@@ -218,10 +233,18 @@ export function MRDescriptionPanel({ review, currentDescription }: MRDescription
                           {sug.category}
                         </span>
                       </div>
-                      <p className="text-sm font-semibold text-foreground leading-snug">{sug.suggestion}</p>
                     </div>
                     {isExpanded ? <ChevronUp size={14} className="text-muted-foreground flex-shrink-0" /> : <ChevronDown size={14} className="text-muted-foreground flex-shrink-0" />}
                   </button>
+                  <div className="px-5 pb-3">
+                    <ExpandableText
+                      text={sug.suggestion}
+                      collapsedLines={compact ? 2 : 3}
+                      minLength={compact ? 110 : 220}
+                      defaultExpanded={!compact}
+                      className="text-sm font-semibold text-foreground leading-snug"
+                    />
+                  </div>
                   {isExpanded && sug.example && (
                     <div className="border-t border-border px-5 py-4 bg-secondary/20">
                       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Example</p>
@@ -237,25 +260,25 @@ export function MRDescriptionPanel({ review, currentDescription }: MRDescription
 
       {/* Suggested description */}
       <div className="bg-card border border-border rounded-2xl overflow-hidden">
-        <button
-          onClick={() => setShowSuggested(!showSuggested)}
-          className="w-full flex items-center justify-between px-6 py-4 hover:bg-secondary/30 transition-colors"
-        >
-          <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
-            <ClipboardCopy size={16} className="text-accent" />
-            Suggested MR Description
-          </h3>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={(e) => { e.stopPropagation(); copySuggestedDesc(); }}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card"
-            >
-              {copiedSuggested ? <Check size={12} className="text-accent" /> : <Copy size={12} />}
-              {copiedSuggested ? "Copied!" : "Copy"}
-            </button>
+        <div className="flex items-center justify-between px-6 py-4">
+          <button
+            onClick={() => setShowSuggested(!showSuggested)}
+            className="flex items-center gap-2 hover:opacity-80 transition-opacity text-left"
+          >
+            <ClipboardCopy size={16} className="text-accent flex-shrink-0" />
+            <h3 className="text-base font-semibold text-foreground">
+              Suggested MR Description
+            </h3>
             {showSuggested ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
-          </div>
-        </button>
+          </button>
+          <button
+            onClick={copySuggestedDesc}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card"
+          >
+            {copiedSuggested ? <Check size={12} className="text-accent" /> : <Copy size={12} />}
+            {copiedSuggested ? "Copied!" : "Copy"}
+          </button>
+        </div>
         {showSuggested && (
           <div className="border-t border-border px-6 py-5">
             <pre className="text-sm font-mono text-foreground bg-background border border-border rounded-xl p-4 whitespace-pre-wrap break-words leading-relaxed max-h-[500px] overflow-y-auto">

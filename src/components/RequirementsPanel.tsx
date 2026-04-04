@@ -6,17 +6,20 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import type { RequirementsCheck } from "../types";
+import { ExpandableText } from "./ExpandableText";
+import type { ResultViewMode } from "./ResultViewToggle";
 
 interface RequirementsPanelProps {
   check: RequirementsCheck;
   issueUrl?: string;
+  viewMode?: ResultViewMode;
 }
 
 const STATUS_CONFIG = {
-  fulfilled: { icon: CheckCircle2, label: "Fulfilled", color: "text-accent", bg: "bg-accent/10 border-accent/20", badge: "bg-accent text-background" },
-  partially_fulfilled: { icon: AlertTriangle, label: "Partial", color: "text-yellow-500", bg: "bg-yellow-50 dark:bg-yellow-500/10 border-yellow-200 dark:border-yellow-500/20", badge: "bg-yellow-500 text-background" },
-  not_fulfilled: { icon: XCircle, label: "Missing", color: "text-destructive", bg: "bg-destructive/10 border-destructive/20", badge: "bg-destructive text-background" },
-  not_applicable: { icon: MinusCircle, label: "N/A", color: "text-muted-foreground", bg: "bg-muted/50 border-border", badge: "bg-muted text-muted-foreground" },
+  fulfilled: { icon: CheckCircle2, label: "Fulfilled", color: "text-accent", bg: "bg-accent/10 border-accent/20", border: "border-accent/20", badge: "bg-accent text-background" },
+  partially_fulfilled: { icon: AlertTriangle, label: "Partial", color: "text-yellow-500", bg: "bg-yellow-50 dark:bg-yellow-500/10 border-yellow-200 dark:border-yellow-500/20", border: "border-yellow-200 dark:border-yellow-500/20", badge: "bg-yellow-500 text-background" },
+  not_fulfilled: { icon: XCircle, label: "Missing", color: "text-destructive", bg: "bg-destructive/10 border-destructive/20", border: "border-destructive/20", badge: "bg-destructive text-background" },
+  not_applicable: { icon: MinusCircle, label: "N/A", color: "text-muted-foreground", bg: "bg-muted/50 border-border", border: "border-border", badge: "bg-muted text-muted-foreground" },
 };
 
 const COVERAGE_CONFIG = {
@@ -26,18 +29,17 @@ const COVERAGE_CONFIG = {
   poorly_covered: { label: "Poorly Covered", color: "text-destructive", bg: "bg-destructive/10 border-destructive/20" },
 };
 
-export function RequirementsPanel({ check, issueUrl }: RequirementsPanelProps) {
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+export function RequirementsPanel({ check, issueUrl, viewMode = "detailed" }: RequirementsPanelProps) {
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const compact = viewMode === "compact";
 
   const fulfilled = check.requirements.filter((r) => r.status === "fulfilled").length;
   const partial = check.requirements.filter((r) => r.status === "partially_fulfilled").length;
   const missing = check.requirements.filter((r) => r.status === "not_fulfilled").length;
-  const na = check.requirements.filter((r) => r.status === "not_applicable").length;
   const coverage = COVERAGE_CONFIG[check.overallCoverage] ?? COVERAGE_CONFIG.partially_covered;
 
   const pct = check.coverageScore;
-  const barColor = pct >= 80 ? "bg-accent" : pct >= 60 ? "bg-yellow-500" : pct >= 40 ? "bg-orange-500" : "bg-destructive";
 
   const copyAsMd = () => {
     const lines: string[] = [];
@@ -126,7 +128,13 @@ export function RequirementsPanel({ check, issueUrl }: RequirementsPanelProps) {
           </div>
           <div className="flex-1">
             <p className="text-sm font-semibold text-foreground mb-1">{check.issueTitle}</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">{check.issueSummary}</p>
+            <ExpandableText
+              text={check.issueSummary}
+              collapsedLines={compact ? 2 : 4}
+              minLength={compact ? 110 : 240}
+              defaultExpanded={!compact}
+              className="text-sm text-muted-foreground leading-relaxed"
+            />
           </div>
         </div>
 
@@ -163,20 +171,21 @@ export function RequirementsPanel({ check, issueUrl }: RequirementsPanelProps) {
           {check.requirements.map((req, i) => {
             const cfg = STATUS_CONFIG[req.status] ?? STATUS_CONFIG.not_applicable;
             const Icon = cfg.icon;
-            const isExpanded = expandedIdx === i;
+            const reqKey = req.requirement;
+            const isExpanded = expandedKey === reqKey;
 
             return (
               <motion.div
-                key={i}
+                key={reqKey}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.04, duration: 0.3 }}
-                className={`border rounded-2xl overflow-hidden bg-card ${cfg.bg.split(" ").filter(c => c.startsWith("border-")).join(" ")} ${
+                className={`border rounded-2xl overflow-hidden bg-card ${cfg.border} ${
                   req.status === "not_fulfilled" ? "border-l-4 border-l-destructive" : ""
                 }`}
               >
                 <button
-                  onClick={() => setExpandedIdx(isExpanded ? null : i)}
+                  onClick={() => setExpandedKey(isExpanded ? null : reqKey)}
                   className="w-full flex items-center gap-3 px-5 py-4 hover:bg-secondary/30 transition-colors text-left"
                 >
                   <Icon size={16} className={`flex-shrink-0 ${cfg.color}`} />
@@ -195,13 +204,25 @@ export function RequirementsPanel({ check, issueUrl }: RequirementsPanelProps) {
                     {req.evidence && (
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Evidence</p>
-                        <p className="text-sm text-foreground leading-relaxed">{req.evidence}</p>
+                        <ExpandableText
+                          text={req.evidence}
+                          collapsedLines={compact ? 2 : 4}
+                          minLength={compact ? 110 : 220}
+                          defaultExpanded={!compact}
+                          className="text-sm text-foreground leading-relaxed"
+                        />
                       </div>
                     )}
                     {req.notes && (
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Notes</p>
-                        <p className="text-sm text-muted-foreground leading-relaxed">{req.notes}</p>
+                        <ExpandableText
+                          text={req.notes}
+                          collapsedLines={compact ? 2 : 4}
+                          minLength={compact ? 110 : 220}
+                          defaultExpanded={!compact}
+                          className="text-sm text-muted-foreground leading-relaxed"
+                        />
                       </div>
                     )}
                   </div>
@@ -220,8 +241,8 @@ export function RequirementsPanel({ check, issueUrl }: RequirementsPanelProps) {
             Missing Items
           </h3>
           <ul className="space-y-2">
-            {check.missingItems.map((item, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+            {check.missingItems.map((item) => (
+              <li key={item} className="flex items-start gap-2 text-sm text-foreground">
                 <span className="text-destructive mt-0.5">•</span>
                 {item}
               </li>
@@ -238,8 +259,8 @@ export function RequirementsPanel({ check, issueUrl }: RequirementsPanelProps) {
             Suggestions
           </h3>
           <ul className="space-y-2">
-            {check.suggestions.map((s, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+            {check.suggestions.map((s) => (
+              <li key={s} className="flex items-start gap-2 text-sm text-muted-foreground">
                 <span className="text-yellow-500 mt-0.5">→</span>
                 {s}
               </li>

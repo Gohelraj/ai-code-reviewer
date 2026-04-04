@@ -2,7 +2,7 @@ import { useState, useEffect, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import {
   Shield, Zap, CheckCircle2, XCircle, AlertTriangle, MessageSquare,
-  ChevronDown, ChevronUp, Copy, Check, Star, BookOpen, Lock, Gauge, Send, FileCode, MapPin,
+  ChevronDown, ChevronUp, Copy, Check, BookOpen, Lock, Gauge, Send, FileCode, MapPin,
   Square, CheckSquare, ListChecks, EyeOff, Eye, ClipboardCopy, Play, RefreshCw, Key, Pencil,
   Bot, Sparkles, Wand2, GitCompareArrows
 } from "lucide-react";
@@ -56,12 +56,12 @@ const SEVERITY_CONFIG: Record<string, SeverityConfigEntry> = {
 };
 const DEFAULT_SEVERITY = SEVERITY_CONFIG.suggestion;
 
-type VerdictConfigEntry = { label: string; icon: typeof CheckCircle2; color: string; bg: string };
+type VerdictConfigEntry = { label: string; icon: typeof CheckCircle2; color: string; bg: string; cardBorder: string };
 const VERDICT_CONFIG: Record<string, VerdictConfigEntry> = {
-  approve: { label: "Approved", icon: CheckCircle2, color: "text-accent", bg: "bg-accent/10 border-accent/20" },
-  approve_with_suggestions: { label: "Approved with suggestions", icon: CheckCircle2, color: "text-yellow-500", bg: "bg-yellow-50 border-yellow-200 dark:bg-yellow-500/10 dark:border-yellow-500/20" },
-  request_changes: { label: "Changes requested", icon: XCircle, color: "text-destructive", bg: "bg-destructive/10 border-destructive/20" },
-  needs_discussion: { label: "Needs discussion", icon: AlertTriangle, color: "text-yellow-500", bg: "bg-yellow-50 border-yellow-200 dark:bg-yellow-500/10 dark:border-yellow-500/20" },
+  approve: { label: "Approved", icon: CheckCircle2, color: "text-accent", bg: "bg-accent/10 border-accent/20", cardBorder: "border-accent/40" },
+  approve_with_suggestions: { label: "Approved with suggestions", icon: CheckCircle2, color: "text-yellow-500", bg: "bg-yellow-50 border-yellow-200 dark:bg-yellow-500/10 dark:border-yellow-500/20", cardBorder: "border-yellow-300/60 dark:border-yellow-500/30" },
+  request_changes: { label: "Changes requested", icon: XCircle, color: "text-destructive", bg: "bg-destructive/10 border-destructive/20", cardBorder: "border-destructive/40" },
+  needs_discussion: { label: "Needs discussion", icon: AlertTriangle, color: "text-yellow-500", bg: "bg-yellow-50 border-yellow-200 dark:bg-yellow-500/10 dark:border-yellow-500/20", cardBorder: "border-yellow-300/60 dark:border-yellow-500/30" },
 };
 const DEFAULT_VERDICT = VERDICT_CONFIG.needs_discussion;
 
@@ -188,7 +188,7 @@ function buildSingleIssueMarkdown(issue: ReviewIssue): string {
   return buildIssueMarkdown(issue);
 }
 
-function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismiss, onRestore, posted, editedComment, onEditComment, onResetComment, highlighted, onFocusIssue, generatedFix, fixLoading, onGenerateFix }: {
+function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismiss, onRestore, posted, editedComment, onEditComment, onResetComment, highlighted, onFocusIssue, generatedFix, fixLoading, onGenerateFix, forceExpanded }: {
   issue: ReviewIssue;
   index: number;
   selected?: boolean;
@@ -205,8 +205,9 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
   generatedFix?: string;
   fixLoading?: boolean;
   onGenerateFix?: () => void;
+  forceExpanded?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(issue.severity === "critical" && !dismissed || !!highlighted);
+  const [expanded, setExpanded] = useState(!!highlighted);
   const [evidenceExpanded, setEvidenceExpanded] = useState(false);
   const [issueCopied, setIssueCopied] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -214,8 +215,8 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
   const isEdited = editedComment !== undefined;
 
   useEffect(() => {
-    if (highlighted) setExpanded(true);
-  }, [highlighted]);
+    if (forceExpanded) setExpanded(true);
+  }, [forceExpanded]);
 
   // Extract title from edited markdown (first heading line: "#### emoji [SEV] Title")
   const displayTitle = isEdited
@@ -264,8 +265,6 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
             <span className="text-xs text-muted-foreground px-2 py-0.5 rounded-md bg-secondary border border-border">
               {issue.category}
             </span>
-            <ConfidenceBadge confidence={issue.confidence} />
-            <VerificationBadge status={issue.verificationStatus} />
             {dismissed && (
               <span className="text-xs font-medium text-muted-foreground px-2 py-0.5 rounded-md bg-muted border border-border line-through">
                 Dismissed
@@ -308,21 +307,22 @@ function IssueCard({ issue, index, selected, onToggleSelect, dismissed, onDismis
 
       {expanded && (
         <div className={`border-t px-5 py-5 space-y-5 ${config.border} ${config.bg}`}>
-          {/* Location banner — shown prominently at top of expanded section */}
-          {(issue.file || issue.lineHint) && (
-            <div className="flex items-center gap-2 flex-wrap p-3 rounded-xl bg-muted/60 border border-border">
-              <FileCode size={13} className="text-muted-foreground flex-shrink-0" />
-              {issue.file && (
-                <code className="text-xs font-mono text-foreground break-all">{issue.file}</code>
-              )}
-              {issue.lineHint && (
-                <span className="ml-auto inline-flex items-center gap-1 text-xs font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-2 py-0.5 rounded-md whitespace-nowrap">
-                  <MapPin size={10} />
-                  {issue.lineHint}
-                </span>
-              )}
-            </div>
-          )}
+          {/* Confidence + Verification meta row */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <ConfidenceBadge confidence={issue.confidence} />
+            <VerificationBadge status={issue.verificationStatus} />
+            {(issue.file || issue.lineHint) && (
+              <span className="ml-auto inline-flex items-center gap-1.5 text-xs font-mono text-foreground/70">
+                <FileCode size={11} className="text-muted-foreground flex-shrink-0" />
+                {issue.file && <span className="truncate max-w-[260px]">{issue.file}</span>}
+                {issue.lineHint && (
+                  <span className="inline-flex items-center gap-0.5 text-amber-600 dark:text-amber-400 font-semibold">
+                    <MapPin size={10} />{issue.lineHint}
+                  </span>
+                )}
+              </span>
+            )}
+          </div>
           {/* Edited comment preview */}
           {isEdited && !editing && (
             <div className="space-y-2">
@@ -726,6 +726,360 @@ function CollapsibleInfoSection({
   );
 }
 
+function AskThisPRPanel({
+  reviewChat,
+  chatInput,
+  setChatInput,
+  chatLoading,
+  aiConfig,
+  onSubmit,
+}: {
+  reviewChat: ReviewChatMessage[];
+  chatInput: string;
+  setChatInput: (v: string) => void;
+  chatLoading: boolean;
+  aiConfig: AIConfig | null;
+  onSubmit: (e: React.FormEvent) => void;
+}) {
+  const [open, setOpen] = useState(reviewChat.length > 0);
+
+  useEffect(() => {
+    if (reviewChat.length > 0) setOpen(true);
+  }, [reviewChat.length]);
+
+  return (
+    <div className="bg-card border border-border rounded-2xl overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-secondary/40 transition-colors text-left"
+      >
+        <div className="flex items-center gap-2">
+          <Bot size={14} className="text-muted-foreground" />
+          <span className="text-sm font-semibold text-foreground">Ask This PR</span>
+          {reviewChat.length > 0 && (
+            <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{reviewChat.length}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>{open ? "Collapse" : "Ask follow-up questions"}</span>
+          {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t border-border px-5 py-5">
+          <div className="space-y-3 mb-4">
+            {reviewChat.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                Ask focused follow-up questions about the changed code, review findings, or risky files.
+              </p>
+            )}
+            {reviewChat.map((message, index) => (
+              <div
+                key={`${message.createdAt}-${index}`}
+                className={`rounded-2xl border px-4 py-3 ${
+                  message.role === "assistant"
+                    ? "bg-secondary/40 border-border"
+                    : "bg-card border-accent/20"
+                }`}
+              >
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                  {message.role === "assistant" ? "AI reviewer" : "You"}
+                </p>
+                <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
+              </div>
+            ))}
+          </div>
+          <form onSubmit={onSubmit} className="flex items-end gap-3">
+            <textarea
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              placeholder="Ask about auth risk, risky files, missing tests, or a specific issue."
+              rows={3}
+              className="flex-1 rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground resize-y focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all"
+            />
+            <button
+              type="submit"
+              disabled={chatLoading || !chatInput.trim() || !aiConfig}
+              className="flex items-center gap-2 rounded-xl bg-foreground text-background px-4 py-3 text-sm font-semibold hover:bg-foreground/90 transition-colors disabled:opacity-50"
+            >
+              {chatLoading ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              Ask
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PositivesCard({
+  strengths,
+  architectureObservations,
+  securityConsiderations,
+  performanceConsiderations,
+}: {
+  strengths: string[];
+  architectureObservations: CodeReview["architectureObservations"];
+  securityConsiderations: string[];
+  performanceConsiderations: string[];
+}) {
+  const [open, setOpen] = useState(false);
+  const itemCount = strengths.length + architectureObservations.length + securityConsiderations.length + performanceConsiderations.length;
+
+  return (
+    <div className="bg-card border border-border rounded-2xl overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-secondary/40 transition-colors text-left"
+      >
+        <div className="flex items-center gap-2">
+          <CheckCircle2 size={14} className="text-accent" />
+          <span className="text-sm font-semibold text-foreground">Strengths &amp; Observations</span>
+          <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{itemCount}</span>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>{open ? "Collapse" : "Expand"}</span>
+          {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t border-border px-5 py-5 space-y-5">
+          {strengths.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Strengths</p>
+              <div className="space-y-2">
+                {strengths.map((strength) => (
+                  <div key={strength} className="flex items-start gap-2.5">
+                    <div className="w-5 h-5 rounded-full bg-accent/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <CheckCircle2 size={11} className="text-accent" />
+                    </div>
+                    <p className="text-sm text-foreground">{strength}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {architectureObservations.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Architecture Observations</p>
+              <div className="space-y-3">
+                {architectureObservations.map((obs, i) => (
+                  <div key={i} className="bg-secondary/50 rounded-xl p-4">
+                    <p className="text-xs font-bold text-foreground uppercase tracking-wider mb-1.5">{obs.aspect}</p>
+                    <p className="text-sm text-foreground leading-relaxed">{obs.observation}</p>
+                    <div className="mt-2 flex items-start gap-1.5">
+                      <span className="text-accent text-sm">→</span>
+                      <p className="text-sm text-muted-foreground leading-relaxed">{obs.recommendation}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {securityConsiderations.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
+                  <Lock size={11} />Security
+                </p>
+                <ul className="space-y-2">
+                  {securityConsiderations.map((s) => (
+                    <li key={s} className="text-sm text-muted-foreground flex items-start gap-2">
+                      <Shield size={13} className="text-muted-foreground flex-shrink-0 mt-0.5" />
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {performanceConsiderations.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
+                  <Gauge size={11} />Performance
+                </p>
+                <ul className="space-y-2">
+                  {performanceConsiderations.map((p) => (
+                    <li key={p} className="text-sm text-muted-foreground flex items-start gap-2">
+                      <Zap size={13} className="text-muted-foreground flex-shrink-0 mt-0.5" />
+                      {p}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReviewInsightsCard({  review,
+  previousReview,
+  previousReviewMeta,
+  onSelectedFileChange,
+}: {
+  review: CodeReview;
+  previousReview: CodeReview | null;
+  previousReviewMeta: { source: "history" | "rerun"; previousCommits: number; commitDelta: number; timestamp?: number } | null;
+  onSelectedFileChange?: (file: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const itemCount = [
+    review.reviewDiff && previousReview ? 1 : 0,
+    review.testGapSummary ? 1 : 0,
+    review.verificationSummary ? 1 : 0,
+    review.contextInsights?.length ?? 0,
+    review.riskHotspots.length,
+    review.reviewerSuggestions?.length ?? 0,
+  ].reduce((a, b) => a + b, 0);
+
+  return (
+    <div className="bg-card border border-border rounded-2xl overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-secondary/40 transition-colors text-left"
+      >
+        <div className="flex items-center gap-2">
+          <Sparkles size={14} className="text-muted-foreground" />
+          <span className="text-sm font-semibold text-foreground">Review Insights</span>
+          <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{itemCount}</span>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>{open ? "Hide" : "Show"} context, risks &amp; diff</span>
+          {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t border-border px-5 py-5 space-y-4">
+          {review.reviewDiff && previousReview && (
+            <div className="rounded-xl border border-border bg-secondary/30 p-4">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-2">
+                <GitCompareArrows size={14} />
+                {previousReviewMeta?.source === "history" ? "Comparison vs Last Saved Review" : "Re-run Comparison"}
+              </h3>
+              {previousReviewMeta && (
+                <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
+                  {previousReviewMeta.source === "history"
+                    ? previousReviewMeta.commitDelta > 0
+                      ? `${previousReviewMeta.commitDelta} new commit${previousReviewMeta.commitDelta === 1 ? "" : "s"} detected since the last saved review${previousReviewMeta.timestamp ? ` from ${formatDistanceToNow(previousReviewMeta.timestamp, { addSuffix: true })}` : ""}.`
+                      : `Comparing against the last saved review${previousReviewMeta.timestamp ? ` from ${formatDistanceToNow(previousReviewMeta.timestamp, { addSuffix: true })}` : ""}. No new commits were detected.`
+                    : "Comparing this review against the previous run on the currently loaded MR snapshot."}
+                </p>
+              )}
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="rounded-full bg-accent/10 text-accent px-2.5 py-1 border border-accent/20">
+                  {review.reviewDiff.scoreDelta >= 0 ? "+" : ""}{review.reviewDiff.scoreDelta} score delta
+                </span>
+                <span className="rounded-full bg-blue-50 text-blue-600 px-2.5 py-1 border border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20">
+                  {review.reviewDiff.addedIssueIds.length} added
+                </span>
+                <span className="rounded-full bg-muted text-muted-foreground px-2.5 py-1 border border-border">
+                  {review.reviewDiff.removedIssueIds.length} removed
+                </span>
+                <span className="rounded-full bg-yellow-50 text-yellow-600 px-2.5 py-1 border border-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20">
+                  {review.reviewDiff.changedSeverityIds.length} severity changes
+                </span>
+              </div>
+            </div>
+          )}
+
+          {review.testGapSummary && (
+            <div className="rounded-xl border border-border bg-secondary/30 p-4">
+              <h3 className="text-sm font-semibold text-foreground mb-1">Test Gap Signal</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">{review.testGapSummary}</p>
+            </div>
+          )}
+
+          {review.verificationSummary && (
+            <div className="rounded-xl border border-border bg-secondary/30 p-4">
+              <h3 className="text-sm font-semibold text-foreground mb-1">Verification Summary</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">{review.verificationSummary}</p>
+            </div>
+          )}
+
+          {review.contextInsights && review.contextInsights.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Related Context Retrieved</p>
+              <div className="space-y-2">
+                {review.contextInsights.map((insight) => (
+                  <button
+                    key={`${insight.file}-${insight.source}-${insight.reason}`}
+                    onClick={() => onSelectedFileChange?.(insight.file)}
+                    className="w-full text-left rounded-xl border border-border bg-card px-4 py-3 hover:bg-secondary/40 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-mono text-foreground truncate">{insight.file}</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {insight.source.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{insight.reason}</p>
+                    {insight.excerpt && (
+                      <pre className="mt-2 text-xs font-mono rounded-lg border border-border bg-background p-3 overflow-x-auto whitespace-pre-wrap break-words text-foreground">
+                        <code>{insight.excerpt}</code>
+                      </pre>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {review.riskHotspots.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Risk Hotspots</p>
+              <div className="space-y-2">
+                {review.riskHotspots.map((hotspot) => (
+                  <button
+                    key={hotspot.file}
+                    onClick={() => onSelectedFileChange?.(hotspot.file)}
+                    className="w-full text-left rounded-xl border border-border bg-card px-4 py-3 hover:bg-secondary/40 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-mono text-foreground truncate">{hotspot.file}</span>
+                      <span className="text-xs font-semibold text-destructive">Risk {hotspot.score}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">{hotspot.reasons.join(" · ")}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {review.reviewerSuggestions && review.reviewerSuggestions.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Suggested Reviewers</p>
+              <div className="space-y-2">
+                {review.reviewerSuggestions.map((suggestion) => (
+                  <div key={suggestion.reviewer} className="rounded-xl border border-border bg-card px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-semibold text-foreground">{suggestion.reviewer}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {suggestion.files.length} owned file{suggestion.files.length === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1 break-words">{suggestion.files.join(" · ")}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function CodeReviewPanel({
   review,
   prUrl,
@@ -798,6 +1152,7 @@ export function CodeReviewPanel({
   const [groupBy, setGroupBy] = useState<"severity" | "file">("severity");
   const [generatedFixes, setGeneratedFixes] = useState<Record<string, string>>({});
   const [loadingFixId, setLoadingFixId] = useState<string | null>(null);
+  const [expandCriticalsFlag, setExpandCriticalsFlag] = useState(0);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const hasRepoContext = !!aiConfig?.repoMemory?.trim();
@@ -1160,294 +1515,213 @@ export function CodeReviewPanel({
       className="space-y-6"
     >
       {/* Verdict card */}
-      <div className="bg-card border border-border rounded-2xl overflow-hidden">
-        <div className="p-6 pb-5">
-          <div className="flex items-start justify-between gap-4 mb-6">
-            <div>
-              <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Code Review Verdict</p>
-              <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-bold ${verdictConfig.bg} ${verdictConfig.color}`}>
-                <VerdictIcon size={16} />
-                {verdictConfig.label}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              {canPost && (
-                <button
-                  onClick={() => {
-                    const platform = mrData?.platform === "gitlab" ? "MR" : "PR";
-                    setConfirmModal({
-                      title: `Post Review to ${platform}`,
-                      message: `This will post the full code review as a comment on the ${platform}. This action cannot be undone.`,
-                      confirmLabel: `Post to ${platform}`,
-                      onConfirm: async () => {
-                        setConfirmModal(null);
-                        setPosting(true);
-                        try {
-                          const body = buildReviewMarkdown();
-                          await postReviewComment({ url: prUrl!, token: effectiveToken, body });
-                          toast.success("Review posted to PR!");
-                        } catch (err: unknown) {
-                          toast.error(`Failed to post: ${err instanceof Error ? err.message : "Unknown error"}`);
-                        } finally {
-                          setPosting(false);
-                        }
-                      },
-                    });
-                  }}
-                  disabled={posting}
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card disabled:opacity-50"
-                >
-                  {posting ? (
-                    <span className="w-3 h-3 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
-                  ) : (
-                    <Send size={12} />
-                  )}
-                  {posting ? "Posting..." : "Post to PR"}
-                </button>
-              )}
-                <button
-                  onClick={copyReview}
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card"
-                >
-                  {copied ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
-                  {copied ? "Copied!" : "Copy as MD"}
-                </button>
-                {onTriggerReview && (
-                  <div className="flex items-center gap-2 flex-wrap justify-end">
-                    {onReviewModeChange && (
-                      <ReviewModePicker
-                        value={reviewMode}
-                        onChange={onReviewModeChange}
-                        disabled={reviewLoading}
-                        compact
-                      />
-                    )}
-                    <button
-                      onClick={() => onTriggerReview(reviewMode)}
-                      disabled={reviewLoading}
-                      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card disabled:opacity-50"
-                    >
-                      {reviewLoading ? (
-                        <span className="w-3 h-3 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
-                      ) : (
-                        <Play size={12} />
-                      )}
-                      {reviewLoading ? "Reviewing..." : `Re-run ${reviewMode === "quick" ? "Quick" : "Deep"}`}
-                    </button>
-                    <button
-                      onClick={() => onTriggerReview(reviewMode, { fresh: true })}
-                      disabled={reviewLoading}
-                      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-secondary disabled:opacity-50"
-                      title="Run the current review mode from scratch without comparing against the previous review"
-                    >
-                      {reviewLoading ? (
-                        <span className="w-3 h-3 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
-                      ) : (
-                        <RefreshCw size={12} />
-                      )}
-                      {reviewLoading ? "Reviewing..." : `Fresh ${reviewMode === "quick" ? "Quick" : "Deep"}`}
-                    </button>
-                  </div>
+      <div className={`bg-card border-2 rounded-2xl overflow-hidden ${verdictConfig.cardBorder}`}>
+        {/* Header strip */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border/60">
+          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest">Code Review Summary</p>
+          <div className="flex items-center gap-2">
+            {canPost && (
+              <button
+                onClick={() => {
+                  const platform = mrData?.platform === "gitlab" ? "MR" : "PR";
+                  setConfirmModal({
+                    title: `Post Review to ${platform}`,
+                    message: `This will post the full code review as a comment on the ${platform}. This action cannot be undone.`,
+                    confirmLabel: `Post to ${platform}`,
+                    onConfirm: async () => {
+                      setConfirmModal(null);
+                      setPosting(true);
+                      try {
+                        const body = buildReviewMarkdown();
+                        await postReviewComment({ url: prUrl!, token: effectiveToken, body });
+                        toast.success("Review posted to PR!");
+                      } catch (err: unknown) {
+                        toast.error(`Failed to post: ${err instanceof Error ? err.message : "Unknown error"}`);
+                      } finally {
+                        setPosting(false);
+                      }
+                    },
+                  });
+                }}
+                disabled={posting}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card disabled:opacity-50"
+              >
+                {posting ? (
+                  <span className="w-3 h-3 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
+                ) : (
+                  <Send size={12} />
                 )}
-              </div>
-            </div>
+                {posting ? "Posting..." : "Post to PR"}
+              </button>
+            )}
+            <button
+              onClick={copyReview}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card"
+            >
+              {copied ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
+              {copied ? "Copied!" : "Copy as MD"}
+            </button>
+          </div>
+        </div>
 
-          {/* Score */}
-          <div className="flex items-center gap-5 mb-6">
-            <div className="relative w-20 h-20 flex-shrink-0">
-              <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
-                <circle cx="40" cy="40" r="34" fill="none" stroke="hsl(var(--muted))" strokeWidth="6" />
-                <motion.circle
-                  cx="40" cy="40" r="34" fill="none"
-                  stroke={review.overallScore >= 8 ? "hsl(var(--accent))" : review.overallScore >= 6 ? "hsl(38 92% 50%)" : "hsl(var(--destructive))"}
-                  strokeWidth="6" strokeLinecap="round"
-                  strokeDasharray={`${(review.overallScore / 10) * 213.6} 213.6`}
-                  initial={{ strokeDasharray: "0 213.6" }}
-                  animate={{ strokeDasharray: `${(review.overallScore / 10) * 213.6} 213.6` }}
+        {/* Score + verdict row */}
+        <div className="px-5 pt-5 pb-4">
+          <div className="flex items-center justify-between gap-4 mb-3">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <span className="text-xs text-muted-foreground whitespace-nowrap">Code Quality Score</span>
+              {/* Progress bar */}
+              <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                <motion.div
+                  className="h-full rounded-full"
+                  style={{
+                    background: review.overallScore >= 8
+                      ? "hsl(var(--accent))"
+                      : review.overallScore >= 6
+                      ? "hsl(38 92% 50%)"
+                      : "hsl(var(--destructive))",
+                  }}
+                  initial={{ width: "0%" }}
+                  animate={{ width: `${(review.overallScore / 10) * 100}%` }}
                   transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
                 />
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-xl font-bold text-foreground">{review.overallScore}</span>
-                <span className="text-xs text-muted-foreground">/10</span>
               </div>
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5">
-                <Star size={14} />
-                Code Quality Score
+              <span className="text-sm font-bold text-foreground tabular-nums whitespace-nowrap">
+                {review.overallScore}/10
                 {previousReview && (
-                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ml-1 ${
+                  <span className={`text-xs font-medium ml-2 ${
                     review.overallScore > previousReview.overallScore
-                      ? "bg-accent/10 text-accent"
+                      ? "text-accent"
                       : review.overallScore < previousReview.overallScore
-                      ? "bg-destructive/10 text-destructive"
-                      : "bg-muted text-muted-foreground"
+                      ? "text-destructive"
+                      : "text-muted-foreground"
                   }`}>
-                    {review.overallScore > previousReview.overallScore ? "↑" : review.overallScore < previousReview.overallScore ? "↓" : "="}{" "}
-                    prev: {previousReview.overallScore}/10
+                    {review.overallScore > previousReview.overallScore ? "↑" : review.overallScore < previousReview.overallScore ? "↓" : "="}
+                    {" "}{previousReview.overallScore}
                   </span>
                 )}
-              </p>
-              <p className="text-sm text-muted-foreground leading-relaxed">{review.executiveSummary}</p>
+              </span>
             </div>
           </div>
 
-          {/* Issue summary pills */}
-          <div className="flex gap-2.5 flex-wrap">
+          {/* Verdict pill */}
+          <div className="flex items-center gap-3 mb-4">
+            <div className={`inline-flex items-center gap-2 px-5 py-2 rounded-xl border text-sm font-bold ${verdictConfig.bg} ${verdictConfig.color}`}>
+              <VerdictIcon size={15} />
+              {verdictConfig.label}
+            </div>
             {hasRepoContext && (
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-accent/10 border border-accent/20">
-                <BookOpen size={13} className="text-accent" />
-                <span className="text-xs font-semibold text-accent">Using repo context</span>
-              </div>
-            )}
-            {criticalCount > 0 && (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-destructive/10 border border-destructive/20">
-                <XCircle size={13} className="text-destructive" />
-                <span className="text-xs font-semibold text-destructive">{criticalCount} Critical</span>
-              </div>
-            )}
-            {warningCount > 0 && (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-yellow-50 border border-yellow-200 dark:bg-yellow-500/10 dark:border-yellow-500/20">
-                <AlertTriangle size={13} className="text-yellow-600 dark:text-yellow-400" />
-                <span className="text-xs font-semibold text-yellow-600 dark:text-yellow-400">{warningCount} Warning{warningCount !== 1 ? "s" : ""}</span>
-              </div>
-            )}
-            {suggestionCount > 0 && (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 dark:bg-blue-500/10 dark:border-blue-500/20">
-                <MessageSquare size={13} className="text-blue-600 dark:text-blue-400" />
-                <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">{suggestionCount} Suggestion{suggestionCount !== 1 ? "s" : ""}</span>
+                <BookOpen size={12} className="text-accent" />
+                <span className="text-xs font-semibold text-accent">Repo context</span>
               </div>
             )}
           </div>
 
-          {review.reviewDiff && previousReview && (
-            <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
-              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-2">
-                <GitCompareArrows size={14} />
-                {previousReviewMeta?.source === "history" ? "Comparison vs Last Saved Review" : "Re-run Comparison"}
-              </h3>
-              {previousReviewMeta && (
-                <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
-                  {previousReviewMeta.source === "history"
-                    ? previousReviewMeta.commitDelta > 0
-                      ? `${previousReviewMeta.commitDelta} new commit${previousReviewMeta.commitDelta === 1 ? "" : "s"} detected since the last saved review${previousReviewMeta.timestamp ? ` from ${formatDistanceToNow(previousReviewMeta.timestamp, { addSuffix: true })}` : ""}.`
-                      : `Comparing against the last saved review${previousReviewMeta.timestamp ? ` from ${formatDistanceToNow(previousReviewMeta.timestamp, { addSuffix: true })}` : ""}. No new commits were detected from the saved baseline.`
-                    : "Comparing this review against the previous run on the currently loaded MR snapshot."}
-                </p>
+          {/* Issue stat boxes */}
+          <div className="grid grid-cols-3 gap-2.5 mb-4">
+            <div className="flex flex-col items-center gap-0.5 py-3 rounded-xl bg-destructive/8 border border-destructive/15">
+              <XCircle size={16} className="text-destructive mb-0.5" />
+              <span className="text-2xl font-bold text-destructive tabular-nums leading-none">{criticalCount}</span>
+              <span className="text-[11px] text-muted-foreground mt-0.5">Critical</span>
+            </div>
+            <div className="flex flex-col items-center gap-0.5 py-3 rounded-xl bg-yellow-500/8 border border-yellow-500/15 dark:bg-yellow-500/8 dark:border-yellow-500/15">
+              <AlertTriangle size={16} className="text-yellow-500 mb-0.5" />
+              <span className="text-2xl font-bold text-yellow-500 tabular-nums leading-none">{warningCount}</span>
+              <span className="text-[11px] text-muted-foreground mt-0.5">Warning{warningCount !== 1 ? "s" : ""}</span>
+            </div>
+            <div className="flex flex-col items-center gap-0.5 py-3 rounded-xl bg-blue-500/8 border border-blue-500/15">
+              <MessageSquare size={16} className="text-blue-500 mb-0.5" />
+              <span className="text-2xl font-bold text-blue-500 tabular-nums leading-none">{suggestionCount}</span>
+              <span className="text-[11px] text-muted-foreground mt-0.5">Suggestion{suggestionCount !== 1 ? "s" : ""}</span>
+            </div>
+          </div>
+
+          {/* Executive summary */}
+          <p className="text-sm text-muted-foreground leading-relaxed mb-4">{review.executiveSummary}</p>
+
+          {/* Re-run controls row */}
+          {onTriggerReview && (
+            <div className="flex items-center gap-2 flex-wrap pt-1 pb-1 border-t border-border/50">
+              {onReviewModeChange && (
+                <ReviewModePicker
+                  value={reviewMode}
+                  onChange={onReviewModeChange}
+                  disabled={reviewLoading}
+                  compact
+                />
               )}
-              <div className="flex flex-wrap gap-2 text-xs">
-                <span className="rounded-full bg-accent/10 text-accent px-2.5 py-1 border border-accent/20">
-                  {review.reviewDiff.scoreDelta >= 0 ? "+" : ""}{review.reviewDiff.scoreDelta} score delta
-                </span>
-                <span className="rounded-full bg-blue-50 text-blue-600 px-2.5 py-1 border border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20">
-                  {review.reviewDiff.addedIssueIds.length} added
-                </span>
-                <span className="rounded-full bg-muted text-muted-foreground px-2.5 py-1 border border-border">
-                  {review.reviewDiff.removedIssueIds.length} removed
-                </span>
-                <span className="rounded-full bg-yellow-50 text-yellow-600 px-2.5 py-1 border border-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20">
-                  {review.reviewDiff.changedSeverityIds.length} severity changes
-                </span>
-              </div>
-            </div>
-          )}
-
-          {review.testGapSummary && (
-            <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
-              <h3 className="text-sm font-semibold text-foreground mb-1">Test Gap Signal</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">{review.testGapSummary}</p>
-            </div>
-          )}
-
-          {review.verificationSummary && (
-            <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
-              <h3 className="text-sm font-semibold text-foreground mb-1">Verification Summary</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">{review.verificationSummary}</p>
-            </div>
-          )}
-
-          {review.contextInsights && review.contextInsights.length > 0 && (
-            <CollapsibleInfoSection title="Related Context Retrieved" itemCount={review.contextInsights.length}>
-              <div className="space-y-2">
-                {review.contextInsights.map((insight) => (
-                  <button
-                    key={`${insight.file}-${insight.source}-${insight.reason}`}
-                    onClick={() => onSelectedFileChange?.(insight.file)}
-                    className="w-full text-left rounded-xl border border-border bg-card px-4 py-3 hover:bg-secondary/40 transition-colors"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-mono text-foreground truncate">{insight.file}</span>
-                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        {insight.source.replace(/_/g, " ")}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{insight.reason}</p>
-                    {insight.excerpt && (
-                      <pre className="mt-3 text-xs font-mono rounded-lg border border-border bg-background p-3 overflow-x-auto whitespace-pre-wrap break-words text-foreground">
-                        <code>{insight.excerpt}</code>
-                      </pre>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </CollapsibleInfoSection>
-          )}
-
-          {review.riskHotspots.length > 0 && (
-            <CollapsibleInfoSection title="Risk Hotspots" itemCount={review.riskHotspots.length}>
-              <div className="space-y-2">
-                {review.riskHotspots.map((hotspot) => (
-                  <button
-                    key={hotspot.file}
-                    onClick={() => onSelectedFileChange?.(hotspot.file)}
-                    className="w-full text-left rounded-xl border border-border bg-card px-4 py-3 hover:bg-secondary/40 transition-colors"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-mono text-foreground truncate">{hotspot.file}</span>
-                      <span className="text-xs font-semibold text-destructive">Risk {hotspot.score}</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">{hotspot.reasons.join(" · ")}</p>
-                  </button>
-                ))}
-              </div>
-            </CollapsibleInfoSection>
-          )}
-
-          {review.reviewerSuggestions && review.reviewerSuggestions.length > 0 && (
-            <div className="mt-5 rounded-2xl border border-border bg-secondary/30 p-4">
-              <h3 className="text-sm font-semibold text-foreground mb-3">Suggested Reviewers</h3>
-              <div className="space-y-2">
-                {review.reviewerSuggestions.map((suggestion) => (
-                  <div
-                    key={suggestion.reviewer}
-                    className="rounded-xl border border-border bg-card px-4 py-3"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-semibold text-foreground">{suggestion.reviewer}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {suggestion.files.length} owned file{suggestion.files.length === 1 ? "" : "s"}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1 break-words">{suggestion.files.join(" · ")}</p>
-                  </div>
-                ))}
-              </div>
+              <button
+                onClick={() => onTriggerReview(reviewMode)}
+                disabled={reviewLoading}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card disabled:opacity-50"
+              >
+                {reviewLoading ? (
+                  <span className="w-3 h-3 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
+                ) : (
+                  <Play size={12} />
+                )}
+                {reviewLoading ? "Reviewing..." : `Re-run ${reviewMode === "quick" ? "Quick" : "Deep"}`}
+              </button>
+              <button
+                onClick={() => onTriggerReview(reviewMode, { fresh: true })}
+                disabled={reviewLoading}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-secondary disabled:opacity-50"
+                title="Run from scratch without comparing against the previous review"
+              >
+                {reviewLoading ? (
+                  <span className="w-3 h-3 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
+                ) : (
+                  <RefreshCw size={12} />
+                )}
+                {reviewLoading ? "Reviewing..." : `Fresh ${reviewMode === "quick" ? "Quick" : "Deep"}`}
+              </button>
             </div>
           )}
         </div>
+
+        {/* Merge Readiness Gates */}
+        <div className="px-5 pb-5 border-t border-border/50 pt-4">
+          <MergeReadinessPanel
+            review={review}
+            requirementsCheck={requirementsCheck}
+            mrDescriptionReview={mrDescriptionReview}
+          />
+        </div>
       </div>
+
+      {/* Secondary insights card — collapsed by default */}
+      {(review.reviewDiff || review.testGapSummary || review.verificationSummary ||
+        (review.contextInsights && review.contextInsights.length > 0) ||
+        review.riskHotspots.length > 0 ||
+        (review.reviewerSuggestions && review.reviewerSuggestions.length > 0)) && (
+        <ReviewInsightsCard
+          review={review}
+          previousReview={previousReview ?? null}
+          previousReviewMeta={previousReviewMeta ?? null}
+          onSelectedFileChange={onSelectedFileChange}
+        />
+      )}
 
       {/* Issues */}
       {review.issues.length > 0 && (
         <div>
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm -mx-4 px-4 py-3 mb-2 border-b border-border/50 flex items-center justify-between flex-wrap gap-2">
             <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
               <Shield size={16} />
               Issues & Suggestions
               <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{filteredIssues.length}{activeFilters.size > 0 ? `/${review.issues.length}` : ""}</span>
             </h3>
             <div className="flex items-center gap-2 flex-wrap">
+              {/* Expand criticals shortcut */}
+              {criticalCount > 0 && (
+                <button
+                  onClick={() => setExpandCriticalsFlag((n) => n + 1)}
+                  className="flex items-center gap-1 text-xs font-medium text-destructive bg-destructive/10 border border-destructive/20 hover:bg-destructive/20 transition-colors px-2 py-1 rounded-lg"
+                >
+                  <XCircle size={11} />
+                  Expand {criticalCount} Critical{criticalCount !== 1 ? "s" : ""}
+                </button>
+              )}
               {/* Selection controls */}
               {prUrl && (
                 <div className="flex items-center gap-1.5">
@@ -1591,6 +1865,7 @@ export function CodeReviewPanel({
                   generatedFix={generatedFixes[issue.id]}
                   fixLoading={loadingFixId === issue.id}
                   onGenerateFix={issue.fixable ? () => handleGenerateFix(issue) : undefined}
+                  forceExpanded={issue.severity === "critical" ? expandCriticalsFlag > 0 : undefined}
                 />
               ))}
             </div>
@@ -1631,6 +1906,7 @@ export function CodeReviewPanel({
                         generatedFix={generatedFixes[issue.id]}
                         fixLoading={loadingFixId === issue.id}
                         onGenerateFix={issue.fixable ? () => handleGenerateFix(issue) : undefined}
+                        forceExpanded={issue.severity === "critical" ? expandCriticalsFlag > 0 : undefined}
                       />
                     ))}
                   </div>
@@ -1774,149 +2050,37 @@ export function CodeReviewPanel({
         </div>
       )}
 
-      {/* Strengths */}
-      {review.strengths.length > 0 && (
-        <div className="bg-card border border-border rounded-2xl p-6">
-          <h3 className="text-base font-semibold text-foreground mb-4 flex items-center gap-2">
-            <CheckCircle2 size={16} className="text-accent" />
-            Strengths
-          </h3>
-          <div className="space-y-2.5">
-            {review.strengths.map((strength, i) => (
-              <div key={i} className="flex items-start gap-2.5">
-                <div className="w-5 h-5 rounded-full bg-accent/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <CheckCircle2 size={11} className="text-accent" />
-                </div>
-                <p className="text-sm text-foreground">{strength}</p>
-              </div>
-            ))}
-          </div>
-        </div>
+      {/* Strengths + Architecture + Security + Performance — collapsed by default */}
+      {(review.strengths.length > 0 || review.architectureObservations.length > 0 ||
+        review.securityConsiderations.length > 0 || review.performanceConsiderations.length > 0) && (
+        <PositivesCard
+          strengths={review.strengths}
+          architectureObservations={review.architectureObservations}
+          securityConsiderations={review.securityConsiderations}
+          performanceConsiderations={review.performanceConsiderations}
+        />
       )}
 
-      {/* Architecture + Security + Performance */}
-      <div className="grid grid-cols-1 gap-4">
-        {review.architectureObservations.length > 0 && (
-          <div className="bg-card border border-border rounded-2xl p-6">
-            <h3 className="text-base font-semibold text-foreground mb-4 flex items-center gap-2">
-              <BookOpen size={16} />
-              Architecture Observations
-            </h3>
-            <div className="space-y-4">
-              {review.architectureObservations.map((obs, i) => (
-                <div key={i} className="bg-secondary/50 rounded-xl p-4">
-                  <p className="text-xs font-bold text-foreground uppercase tracking-wider mb-1.5">{obs.aspect}</p>
-                  <p className="text-sm text-foreground leading-relaxed">{obs.observation}</p>
-                  <div className="mt-2 flex items-start gap-1.5">
-                    <span className="text-accent text-sm">→</span>
-                    <p className="text-sm text-muted-foreground leading-relaxed">{obs.recommendation}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {review.securityConsiderations.length > 0 && (
-            <div className="bg-card border border-border rounded-2xl p-5">
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                <Lock size={14} />
-                Security
-              </h3>
-              <ul className="space-y-2">
-                {review.securityConsiderations.map((s, i) => (
-                  <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                    <Shield size={13} className="text-muted-foreground flex-shrink-0 mt-0.5" />
-                    {s}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {review.performanceConsiderations.length > 0 && (
-            <div className="bg-card border border-border rounded-2xl p-5">
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                <Gauge size={14} />
-                Performance
-              </h3>
-              <ul className="space-y-2">
-                {review.performanceConsiderations.map((p, i) => (
-                  <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                    <Zap size={13} className="text-muted-foreground flex-shrink-0 mt-0.5" />
-                    {p}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+      {/* Testing Assessment + Merge Readiness — always visible */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="bg-card border border-border rounded-2xl p-5">
+          <h3 className="text-sm font-semibold text-foreground mb-2">Testing Assessment</h3>
+          <p className="text-sm text-muted-foreground leading-relaxed">{review.testingAssessment}</p>
         </div>
-
-        {/* Testing + Merge Readiness */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="bg-card border border-border rounded-2xl p-5">
-            <h3 className="text-sm font-semibold text-foreground mb-2">Testing Assessment</h3>
-            <p className="text-sm text-muted-foreground leading-relaxed">{review.testingAssessment}</p>
-          </div>
-          <div className={`rounded-2xl p-5 border ${verdictConfig.bg}`}>
-            <h3 className={`text-sm font-semibold mb-2 ${verdictConfig.color}`}>Merge Readiness</h3>
-            <p className="text-sm text-foreground leading-relaxed">{review.mergeReadiness}</p>
-          </div>
-        </div>
-
-        <MergeReadinessPanel
-          review={review}
-          requirementsCheck={requirementsCheck}
-          mrDescriptionReview={mrDescriptionReview}
-        />
-
-        <div className="bg-card border border-border rounded-2xl p-6">
-          <h3 className="text-base font-semibold text-foreground mb-4 flex items-center gap-2">
-            <Bot size={16} />
-            Ask This PR
-          </h3>
-          <div className="space-y-3">
-            {reviewChat.length === 0 && (
-              <p className="text-sm text-muted-foreground">
-                Ask focused follow-up questions about the changed code, review findings, or risky files.
-              </p>
-            )}
-            {reviewChat.map((message, index) => (
-              <div
-                key={`${message.createdAt}-${index}`}
-                className={`rounded-2xl border px-4 py-3 ${
-                  message.role === "assistant"
-                    ? "bg-secondary/40 border-border"
-                    : "bg-card border-accent/20"
-                }`}
-              >
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-                  {message.role === "assistant" ? "AI reviewer" : "You"}
-                </p>
-                <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
-              </div>
-            ))}
-          </div>
-          <form onSubmit={handleAskQuestion} className="mt-4 flex items-end gap-3">
-            <textarea
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              placeholder="Ask about auth risk, risky files, missing tests, or a specific issue."
-              rows={3}
-              className="flex-1 rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground resize-y focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all"
-            />
-            <button
-              type="submit"
-              disabled={chatLoading || !chatInput.trim() || !aiConfig}
-              className="flex items-center gap-2 rounded-xl bg-foreground text-background px-4 py-3 text-sm font-semibold hover:bg-foreground/90 transition-colors disabled:opacity-50"
-            >
-              {chatLoading ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
-              Ask
-            </button>
-          </form>
+        <div className={`rounded-2xl p-5 border ${verdictConfig.bg}`}>
+          <h3 className={`text-sm font-semibold mb-2 ${verdictConfig.color}`}>Merge Readiness</h3>
+          <p className="text-sm text-foreground leading-relaxed">{review.mergeReadiness}</p>
         </div>
       </div>
+
+      <AskThisPRPanel
+        reviewChat={reviewChat}
+        chatInput={chatInput}
+        setChatInput={setChatInput}
+        chatLoading={chatLoading}
+        aiConfig={aiConfig ?? null}
+        onSubmit={handleAskQuestion}
+      />
 
       {editModal && (
         <EditBeforePostModal

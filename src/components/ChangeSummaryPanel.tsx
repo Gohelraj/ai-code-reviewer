@@ -2,6 +2,8 @@ import { motion } from "framer-motion";
 import { AlertTriangle, Code2, TestTube, Layers, TrendingUp, TrendingDown, Minus, Copy, Check } from "lucide-react";
 import type { ChangeSummary, MRData } from "../types";
 import { DiffViewer, DiffStats } from "./DiffViewer";
+import { ExpandableText } from "./ExpandableText";
+import type { ResultViewMode } from "./ResultViewToggle";
 import { useState, useEffect } from "react";
 import toast from "react-hot-toast";
 
@@ -9,6 +11,7 @@ interface ChangeSummaryPanelProps {
   summary: ChangeSummary;
   mrData: MRData;
   scrollToFile?: string | null;
+  viewMode?: ResultViewMode;
 }
 
 const CHANGE_TYPE_COLORS: Record<string, string> = {
@@ -40,9 +43,11 @@ function ImpactBadge({ impact }: { impact: string }) {
   );
 }
 
-export function ChangeSummaryPanel({ summary, mrData, scrollToFile }: ChangeSummaryPanelProps) {
+export function ChangeSummaryPanel({ summary, mrData, scrollToFile, viewMode = "detailed" }: ChangeSummaryPanelProps) {
   const [showAllDiffs, setShowAllDiffs] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showAllKeyChanges, setShowAllKeyChanges] = useState(viewMode !== "compact");
+  const compact = viewMode === "compact";
 
   // Auto-expand all diffs when navigating to a specific file
   useEffect(() => {
@@ -54,7 +59,12 @@ export function ChangeSummaryPanel({ summary, mrData, scrollToFile }: ChangeSumm
     }
   }, [scrollToFile, mrData.files]);
 
-  const displayedFiles = showAllDiffs ? mrData.files : mrData.files.slice(0, 5);
+  useEffect(() => {
+    setShowAllKeyChanges(viewMode !== "compact");
+  }, [viewMode]);
+
+  const displayedFiles = showAllDiffs ? mrData.files : mrData.files.slice(0, compact ? 3 : 5);
+  const visibleKeyChanges = showAllKeyChanges ? summary.keyChanges : summary.keyChanges.slice(0, compact ? 3 : summary.keyChanges.length);
 
   const copySummary = () => {
     const text = [
@@ -121,14 +131,29 @@ export function ChangeSummaryPanel({ summary, mrData, scrollToFile }: ChangeSumm
           </button>
         </div>
 
-        <p className="text-sm text-muted-foreground leading-relaxed mb-4">{summary.summary}</p>
+        <div className="mb-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">TL;DR</p>
+          <ExpandableText
+            text={summary.summary}
+            collapsedLines={compact ? 2 : 4}
+            minLength={compact ? 120 : 240}
+            defaultExpanded={!compact}
+            className="text-sm text-muted-foreground leading-relaxed"
+          />
+        </div>
 
         {summary.breakingChanges && summary.breakingChangesDescription && (
           <div className="flex items-start gap-3 p-3 rounded-xl border border-destructive/20 bg-destructive/5 mb-4">
             <AlertTriangle size={16} className="text-destructive flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-medium text-destructive">Breaking Changes</p>
-              <p className="text-sm text-foreground mt-0.5">{summary.breakingChangesDescription}</p>
+              <ExpandableText
+                text={summary.breakingChangesDescription}
+                collapsedLines={compact ? 2 : 4}
+                minLength={compact ? 100 : 220}
+                defaultExpanded={!compact}
+                className="text-sm text-foreground mt-0.5"
+              />
             </div>
           </div>
         )}
@@ -155,9 +180,9 @@ export function ChangeSummaryPanel({ summary, mrData, scrollToFile }: ChangeSumm
           Key Changes by Area
         </h3>
         <div className="space-y-3">
-          {summary.keyChanges.map((change, i) => (
+          {visibleKeyChanges.map((change, i) => (
             <motion.div
-              key={i}
+              key={change.area}
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: i * 0.06, duration: 0.3 }}
@@ -168,11 +193,35 @@ export function ChangeSummaryPanel({ summary, mrData, scrollToFile }: ChangeSumm
                   <span className="text-sm font-medium text-foreground">{change.area}</span>
                   <ImpactBadge impact={change.impact} />
                 </div>
-                <p className="text-sm text-muted-foreground">{change.description}</p>
+                <ExpandableText
+                  text={change.description}
+                  collapsedLines={compact ? 2 : 3}
+                  minLength={compact ? 90 : 180}
+                  defaultExpanded={!compact}
+                  className="text-sm text-muted-foreground"
+                />
               </div>
             </motion.div>
           ))}
         </div>
+        {compact && summary.keyChanges.length > visibleKeyChanges.length && (
+          <button
+            type="button"
+            onClick={() => setShowAllKeyChanges(true)}
+            className="mt-3 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Show all {summary.keyChanges.length} key changes
+          </button>
+        )}
+        {compact && showAllKeyChanges && summary.keyChanges.length > 3 && (
+          <button
+            type="button"
+            onClick={() => setShowAllKeyChanges(false)}
+            className="mt-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Collapse key changes
+          </button>
+        )}
       </div>
 
       {/* Tech Stack & Testing */}
@@ -196,7 +245,13 @@ export function ChangeSummaryPanel({ summary, mrData, scrollToFile }: ChangeSumm
             <TestTube size={15} />
             Testing Status
           </h3>
-          <p className="text-sm text-muted-foreground leading-relaxed">{summary.testingStatus}</p>
+          <ExpandableText
+            text={summary.testingStatus}
+            collapsedLines={compact ? 2 : 3}
+            minLength={compact ? 90 : 180}
+            defaultExpanded={!compact}
+            className="text-sm text-muted-foreground leading-relaxed"
+          />
         </div>
       </div>
 
@@ -210,12 +265,12 @@ export function ChangeSummaryPanel({ summary, mrData, scrollToFile }: ChangeSumm
             <DiffViewer key={file.filename} file={file} defaultOpen={i === 0 && mrData.files.length <= 3} />
           ))}
         </div>
-        {mrData.files.length > 5 && (
+        {mrData.files.length > displayedFiles.length && (
           <button
             onClick={() => setShowAllDiffs(!showAllDiffs)}
             className="mt-3 text-sm text-muted-foreground hover:text-foreground transition-colors w-full text-center py-2 rounded-xl hover:bg-secondary"
           >
-            {showAllDiffs ? "Show fewer files" : `Show ${mrData.files.length - 5} more files`}
+            {showAllDiffs ? "Show fewer files" : `Show ${mrData.files.length - displayedFiles.length} more files`}
           </button>
         )}
       </div>

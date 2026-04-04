@@ -16,6 +16,7 @@ import { OPENROUTER_MODELS } from "./AISettings";
 import { ThemeToggle } from "./ThemeToggle";
 import { AISettings } from "./AISettings";
 import { RepoContextSettings } from "./RepoContextSettings";
+import { ResultViewToggle, type ResultViewMode } from "./ResultViewToggle";
 import { exportAsMarkdown, downloadMarkdown, exportAsJSON, downloadJSON } from "../lib/export";
 import { estimateAnalysisCost, formatCost } from "../lib/cost";
 import { getHistory } from "../lib/history";
@@ -176,6 +177,14 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
   const [aiConfigOpen, setAiConfigOpen] = useState(false);
   const [localAIConfig, setLocalAIConfig] = useState<AIConfig | null>(aiConfig ?? null);
   const [scrollToFile, setScrollToFile] = useState<string | null>(state.selectedFile ?? null);
+  const [resultViewMode, setResultViewMode] = useState<ResultViewMode>(() => {
+    try {
+      const saved = localStorage.getItem("results-view-mode");
+      return saved === "detailed" ? "detailed" : "compact";
+    } catch {
+      return "compact";
+    }
+  });
   const repoKey = getRepoKeyFromUrl(prUrl ?? "");
 
   useEffect(() => {
@@ -191,6 +200,12 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
   useEffect(() => {
     setScrollToFile(state.selectedFile ?? null);
   }, [state.selectedFile]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("results-view-mode", resultViewMode);
+    } catch {}
+  }, [resultViewMode]);
 
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
@@ -237,6 +252,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
                 <ChevronDown size={10} className="text-muted-foreground" />
               </button>
             )}
+            <ResultViewToggle value={resultViewMode} onChange={setResultViewMode} />
             <button
               onClick={onRefresh}
               className="hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-border bg-secondary hover:bg-card transition-colors flex-shrink-0"
@@ -335,13 +351,13 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
           </div>
         )}
         {activeTab === "summary" && summary && (
-          <ChangeSummaryPanel summary={summary} mrData={mrData} scrollToFile={scrollToFile} />
+          <ChangeSummaryPanel summary={summary} mrData={mrData} scrollToFile={scrollToFile} viewMode={resultViewMode} />
         )}
         {activeTab === "summary" && !summary && isAnalyzing && (
           <SummarySkeleton />
         )}
         {activeTab === "flow" && executionFlow && (
-          <ExecutionFlowPanel flow={executionFlow} mrData={mrData} />
+          <ExecutionFlowPanel flow={executionFlow} mrData={mrData} viewMode={resultViewMode} />
         )}
         {activeTab === "flow" && !executionFlow && flowLoading && (
           <FlowSkeleton />
@@ -427,7 +443,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
             className="flex flex-col items-center justify-center py-24 text-center"
           >
             <div className="w-16 h-16 rounded-2xl bg-accent/10 flex items-center justify-center mb-5">
-              <span className="w-8 h-8 border-3 border-accent/30 border-t-accent rounded-full animate-spin" />
+              <span className="w-8 h-8 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
             </div>
             <h3 className="text-lg font-semibold text-foreground mb-2">Reviewing Code...</h3>
             <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
@@ -446,7 +462,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
           </motion.div>
         )}
         {activeTab === "requirements" && requirementsCheck && (
-          <RequirementsPanel check={requirementsCheck} issueUrl={state.linkedIssueUrl} />
+          <RequirementsPanel check={requirementsCheck} issueUrl={state.linkedIssueUrl} viewMode={resultViewMode} />
         )}
         {activeTab === "requirements" && !requirementsCheck && !reqLoading && (
           <motion.div
@@ -481,7 +497,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
             className="flex flex-col items-center justify-center py-24 text-center"
           >
             <div className="w-16 h-16 rounded-2xl bg-accent/10 flex items-center justify-center mb-5">
-              <span className="w-8 h-8 border-3 border-accent/30 border-t-accent rounded-full animate-spin" />
+              <span className="w-8 h-8 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
             </div>
             <h3 className="text-lg font-semibold text-foreground mb-2">Checking Requirements...</h3>
             <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
@@ -490,7 +506,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
           </motion.div>
         )}
         {activeTab === "mr-description" && mrDescriptionReview && (
-          <MRDescriptionPanel review={mrDescriptionReview} currentDescription={mrData.pr.description} />
+          <MRDescriptionPanel review={mrDescriptionReview} currentDescription={mrData.pr.description} viewMode={resultViewMode} />
         )}
         {activeTab === "mr-description" && !mrDescriptionReview && !mrDescLoading && (
           <motion.div
@@ -521,7 +537,7 @@ export function ResultsDashboard({ state, onReset, onTabChange, aiConfig, theme,
             className="flex flex-col items-center justify-center py-24 text-center"
           >
             <div className="w-16 h-16 rounded-2xl bg-accent/10 flex items-center justify-center mb-5">
-              <span className="w-8 h-8 border-3 border-accent/30 border-t-accent rounded-full animate-spin" />
+              <span className="w-8 h-8 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
             </div>
             <h3 className="text-lg font-semibold text-foreground mb-2">Reviewing Description...</h3>
             <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">

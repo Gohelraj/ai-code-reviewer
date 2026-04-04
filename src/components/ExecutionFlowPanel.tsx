@@ -1,8 +1,10 @@
-import { useState, lazy, Suspense } from "react";
+import { useState, lazy, Suspense, useEffect } from "react";
 import { motion } from "framer-motion";
 import { ArrowDown, ChevronDown, ChevronUp, ExternalLink, GitCommitHorizontal, Network, Copy, Check, LayoutList, Workflow } from "lucide-react";
 import type { ExecutionFlow, FlowGroup, MRData } from "../types";
 import { DiffViewer } from "./DiffViewer";
+import { ExpandableText } from "./ExpandableText";
+import type { ResultViewMode } from "./ResultViewToggle";
 import toast from "react-hot-toast";
 
 const FlowDiagram = lazy(() => import("./FlowDiagram").then((m) => ({ default: m.FlowDiagram })));
@@ -10,6 +12,7 @@ const FlowDiagram = lazy(() => import("./FlowDiagram").then((m) => ({ default: m
 interface ExecutionFlowPanelProps {
   flow: ExecutionFlow;
   mrData: MRData;
+  viewMode?: ResultViewMode;
 }
 
 const LAYER_COLORS: Record<string, { bg: string; border: string; text: string; dot: string }> = {
@@ -34,10 +37,16 @@ function getLayerStyle(layer: string) {
   return LAYER_COLORS[key] ?? LAYER_COLORS.default;
 }
 
-function FlowGroupCard({ group, mrData, index }: { group: FlowGroup; mrData: MRData; index: number }) {
-  const [expanded, setExpanded] = useState(true);
+function FlowGroupCard({ group, mrData, index, viewMode }: { group: FlowGroup; mrData: MRData; index: number; viewMode: ResultViewMode }) {
+  const compact = viewMode === "compact";
+  const [expanded, setExpanded] = useState(!compact);
   const [expandedFile, setExpandedFile] = useState<string | null>(null);
   const style = getLayerStyle(group.layer);
+
+  useEffect(() => {
+    setExpanded(!compact);
+    if (compact) setExpandedFile(null);
+  }, [compact]);
 
   return (
     <motion.div
@@ -93,7 +102,13 @@ function FlowGroupCard({ group, mrData, index }: { group: FlowGroup; mrData: MRD
                     <div className="border-t border-border px-4 py-3 space-y-3 bg-secondary/20">
                       <div>
                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Changes</p>
-                        <p className="text-sm text-foreground leading-relaxed">{file.keyChanges}</p>
+                        <ExpandableText
+                          text={file.keyChanges}
+                          collapsedLines={compact ? 2 : 4}
+                          minLength={compact ? 100 : 220}
+                          defaultExpanded={!compact}
+                          className="text-sm text-foreground leading-relaxed"
+                        />
                       </div>
 
                       {file.callsInto && file.callsInto.length > 0 && (
@@ -130,10 +145,18 @@ function FlowGroupCard({ group, mrData, index }: { group: FlowGroup; mrData: MRD
   );
 }
 
-export function ExecutionFlowPanel({ flow, mrData }: ExecutionFlowPanelProps) {
+export function ExecutionFlowPanel({ flow, mrData, viewMode = "detailed" }: ExecutionFlowPanelProps) {
   const sortedGroups = [...flow.flowGroups].sort((a, b) => a.order - b.order);
   const [copied, setCopied] = useState(false);
   const [view, setView] = useState<"list" | "diagram">("list");
+  const [showAllGroups, setShowAllGroups] = useState(viewMode !== "compact");
+  const compact = viewMode === "compact";
+
+  useEffect(() => {
+    setShowAllGroups(viewMode !== "compact");
+  }, [viewMode]);
+
+  const visibleGroups = showAllGroups ? sortedGroups : sortedGroups.slice(0, compact ? 4 : sortedGroups.length);
 
   const copyFlow = () => {
     const text = [
@@ -202,7 +225,16 @@ export function ExecutionFlowPanel({ flow, mrData }: ExecutionFlowPanelProps) {
             </button>
           </div>
         </div>
-        <p className="text-sm text-muted-foreground leading-relaxed mb-4">{flow.flowDescription}</p>
+        <div className="mb-4 max-w-3xl">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Overview</p>
+          <ExpandableText
+            text={flow.flowDescription}
+            collapsedLines={compact ? 2 : 4}
+            minLength={compact ? 120 : 240}
+            defaultExpanded={!compact}
+            className="text-sm text-muted-foreground leading-relaxed"
+          />
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="rounded-xl border border-border bg-secondary/40 p-3 overflow-hidden">
@@ -214,9 +246,9 @@ export function ExecutionFlowPanel({ flow, mrData }: ExecutionFlowPanelProps) {
             <div className="text-sm text-foreground leading-relaxed">
               {flow.dataFlow.includes('→') || flow.dataFlow.includes('->') ? (
                 <ul className="space-y-1">
-                  {flow.dataFlow.split(/→|->/).map((segment, i, arr) => (
+                  {flow.dataFlow.split(/→|->/).map((segment, i) => (
                     <li key={i} className="flex items-start gap-1.5">
-                      {i < arr.length - 1 && <span className="text-muted-foreground flex-shrink-0">→</span>}
+                      {i > 0 && <span className="text-muted-foreground flex-shrink-0">→</span>}
                       <span className="break-words">{segment.trim()}</span>
                     </li>
                   ))}
@@ -261,16 +293,34 @@ export function ExecutionFlowPanel({ flow, mrData }: ExecutionFlowPanelProps) {
       ) : (
       /* Flow groups */
       <div className="space-y-3">
-        {sortedGroups.map((group, i) => (
+        {visibleGroups.map((group, i) => (
           <div key={group.layer} className="relative">
-            <FlowGroupCard group={group} mrData={mrData} index={i} />
-            {i < sortedGroups.length - 1 && (
+            <FlowGroupCard group={group} mrData={mrData} index={i} viewMode={viewMode} />
+            {i < visibleGroups.length - 1 && (
               <div className="flex justify-center my-1">
                 <ArrowDown size={16} className="text-muted-foreground/40" />
               </div>
             )}
           </div>
         ))}
+        {compact && sortedGroups.length > visibleGroups.length && (
+          <button
+            type="button"
+            onClick={() => setShowAllGroups(true)}
+            className="w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/30 transition-colors"
+          >
+            Show all {sortedGroups.length} layers
+          </button>
+        )}
+        {compact && showAllGroups && sortedGroups.length > 4 && (
+          <button
+            type="button"
+            onClick={() => setShowAllGroups(false)}
+            className="w-full text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Collapse flow layers
+          </button>
+        )}
       </div>
       )}
     </motion.div>
