@@ -165,10 +165,14 @@ function App() {
       updateState({ step: "done" });
       toast.success("Analysis complete!");
 
-      // Save to history
-      // We need to get the latest state, so use a callback
+      // Pre-generate the entry id and set the ref synchronously so any
+      // immediately-triggered follow-up (e.g. code review) uses the same id
+      // even before the async IndexedDB write resolves.
+      const freshEntryId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      currentHistoryEntryIdRef.current = freshEntryId;
+      setCurrentHistoryEntryId(freshEntryId);
       setState((prev) => {
-        void saveAnalysis(url, prev, normalizedConfig, currentHistoryEntryIdRef.current).then(rememberSavedEntry);
+        void saveAnalysis(url, prev, normalizedConfig, freshEntryId).then(rememberSavedEntry);
         return prev;
       });
     } catch (err) {

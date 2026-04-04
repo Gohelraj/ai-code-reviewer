@@ -112,11 +112,6 @@ export interface ArchitectureObservation {
   recommendation: string;
 }
 
-export interface ReviewerSuggestion {
-  reviewer: string;
-  files: string[];
-}
-
 export interface ReviewContextInsight {
   file: string;
   reason: string;
@@ -146,7 +141,6 @@ export interface CodeReview {
   testGapSummary: string;
   riskHotspots: Array<{ file: string; score: number; reasons: string[] }>;
   contextInsights?: ReviewContextInsight[];
-  reviewerSuggestions?: ReviewerSuggestion[];
   reviewDiff?: { addedIssueIds: string[]; removedIssueIds: string[]; changedSeverityIds: string[]; scoreDelta: number };
   verificationSummary?: string;
   mergeReadiness: string;
