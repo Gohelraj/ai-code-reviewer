@@ -2,7 +2,6 @@ import type { MRData, ChangeSummary, ExecutionFlow, CodeReview, RequirementsChec
 import { DEFAULT_PRIMARY_MODEL, normalizeOpenRouterModel } from "../components/AISettings";
 import type { AIConfig, ReviewMode } from "../components/AISettings";
 import { computeRiskHotspots, computeTestGapSummary, getReviewContextPlan } from "./review-utils";
-import { buildReviewerSuggestions, parseCodeowners } from "./codeowners";
 import { formatRepoReviewMemory, hasRepoReviewMemory, parseRepoReviewMemory, summarizeRepoReviewMemory } from "./repo-memory";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -914,13 +913,6 @@ async function buildRelatedContextInsights(mrData: MRData, reviewMode: ReviewMod
   };
 }
 
-const CODEOWNERS_CANDIDATE_PATHS = [
-  "CODEOWNERS",
-  ".github/CODEOWNERS",
-  ".gitlab/CODEOWNERS",
-  "docs/CODEOWNERS",
-] as const;
-
 async function hydrateGitHubFullContent(mrData: MRData, filenames: string[], token?: string): Promise<FileDiff[]> {
   const parsed = parseGitHubUrl(mrData.pr.url);
   if (!parsed || filenames.length === 0) return mrData.files;
@@ -1368,83 +1360,6 @@ ${sourcesText}`;
   return formatRepoReviewMemory(memory);
 }
 
-const reviewerSuggestionCache = new Map<string, Promise<CodeReview["reviewerSuggestions"]>>();
-
-async function fetchGitHubCodeowners(mrData: MRData, token?: string): Promise<string | null> {
-  const parsed = parseGitHubUrl(mrData.pr.url);
-  if (!parsed) return null;
-
-  const headers: Record<string, string> = {
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "AI-Code-Reviewer/1.0",
-  };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  for (const candidatePath of CODEOWNERS_CANDIDATE_PATHS) {
-    const encodedPath = candidatePath.split("/").map(encodeURIComponent).join("/");
-    const ref = encodeURIComponent(mrData.pr.headBranch);
-    const res = await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents/${encodedPath}?ref=${ref}`, { headers });
-    if (!res.ok) {
-      continue;
-    }
-    const data = await res.json() as { content?: string; encoding?: string };
-    if (data.encoding === "base64" && data.content) {
-      return atob(data.content.replace(/\n/g, ""));
-    }
-  }
-
-  return null;
-}
-
-async function fetchGitLabCodeowners(mrData: MRData, token?: string): Promise<string | null> {
-  const parsed = parseGitLabUrl(mrData.pr.url);
-  if (!parsed) return null;
-
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["PRIVATE-TOKEN"] = token;
-
-  for (const candidatePath of CODEOWNERS_CANDIDATE_PATHS) {
-    const encodedPath = encodeURIComponent(parsed.projectPath);
-    const encodedFile = encodeURIComponent(candidatePath);
-    const ref = encodeURIComponent(mrData.pr.headBranch);
-    const res = await fetch(`/api/gitlab/api/v4/projects/${encodedPath}/repository/files/${encodedFile}/raw?ref=${ref}`, { headers });
-    if (res.ok) {
-      return res.text();
-    }
-  }
-
-  return null;
-}
-
-async function fetchReviewerSuggestions(mrData: MRData, token?: string): Promise<CodeReview["reviewerSuggestions"]> {
-  const cacheKey = `${mrData.platform}:${mrData.pr.url}:${mrData.pr.headBranch}`;
-  const cached = reviewerSuggestionCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  const promise = (async () => {
-    try {
-      const codeownersContent = mrData.platform === "github"
-        ? await fetchGitHubCodeowners(mrData, token)
-        : await fetchGitLabCodeowners(mrData, token);
-
-      if (!codeownersContent) {
-        return [];
-      }
-
-      const rules = parseCodeowners(codeownersContent);
-      return buildReviewerSuggestions(mrData.files, rules);
-    } catch {
-      return [];
-    }
-  })();
-
-  reviewerSuggestionCache.set(cacheKey, promise);
-  return promise;
-}
-
 function buildRelatedContextText(insights: ReviewContextInsight[]): string {
   if (insights.length === 0) {
     return "No additional related repository context was retrieved.";
@@ -1539,7 +1454,6 @@ export async function analyzeCodeReview(mrData: MRData, aiConfig: AIConfig, toke
   const relatedContextText = buildRelatedContextText(insights);
   const structuredRepoMemory = hasRepoReviewMemory(repoMemory) ? formatRepoReviewMemory(repoMemory) : "";
   const repoMemorySummary = hasRepoReviewMemory(repoMemory) ? summarizeRepoReviewMemory(repoMemory) : "";
-  const reviewerSuggestionsPromise = fetchReviewerSuggestions(hydrated, token);
 
   const systemPrompt = `You are a very senior software engineer (10+ years) performing a ${reviewMode === "quick" ? "fast, high-signal" : "thorough, context-aware"} code review.
 
@@ -1673,7 +1587,6 @@ Verify the findings, correct any unsupported claims, and summarise how much of t
     verificationSummary: verification.verificationSummary,
     testGapSummary,
     riskHotspots: computeRiskHotspots(files, normalizedIssues, testGapSummary),
-    reviewerSuggestions: await reviewerSuggestionsPromise,
   };
 
   if (review.overallScore > 10) {

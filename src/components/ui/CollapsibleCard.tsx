@@ -30,6 +30,7 @@ export function CollapsibleCard({
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
         className={clsx(
           "w-full flex items-center gap-2 px-4 py-3 text-left transition-colors hover:bg-secondary/50",
           headerClassName,

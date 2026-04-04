@@ -16,6 +16,7 @@ import { ReviewModePicker } from "./ReviewModePicker";
 import { askReviewQuestion, generateIssueFix } from "../lib/api";
 import { buildMergeReadinessGates, getRepoKeyFromUrl } from "../lib/review-utils";
 import { clearStoredRepoToken, loadStoredRepoToken, saveStoredRepoToken } from "../lib/token-storage";
+import { CollapsibleCard } from "./ui/CollapsibleCard";
 
 interface CodeReviewPanelProps {
   review: CodeReview;
@@ -930,37 +931,9 @@ function ReviewInsightsCard({  review,
   previousReviewMeta: { source: "history" | "rerun"; previousCommits: number; commitDelta: number; timestamp?: number } | null;
   onSelectedFileChange?: (file: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-
-  const itemCount = [
-    review.reviewDiff && previousReview ? 1 : 0,
-    review.testGapSummary ? 1 : 0,
-    review.verificationSummary ? 1 : 0,
-    review.contextInsights?.length ?? 0,
-    review.riskHotspots.length,
-    review.reviewerSuggestions?.length ?? 0,
-  ].reduce((a, b) => a + b, 0);
-
   return (
     <div className="bg-card border border-border rounded-2xl overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-secondary/40 transition-colors text-left"
-      >
-        <div className="flex items-center gap-2">
-          <Sparkles size={14} className="text-muted-foreground" />
-          <span className="text-sm font-semibold text-foreground">Review Insights</span>
-          <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{itemCount}</span>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>{open ? "Hide" : "Show"} context, risks &amp; diff</span>
-          {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </div>
-      </button>
-
-      {open && (
-        <div className="border-t border-border px-5 py-5 space-y-4">
+      <div className="px-5 py-5 space-y-4">
           {review.reviewDiff && previousReview && (
             <div className="rounded-xl border border-border bg-secondary/30 p-4">
               <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-2">
@@ -1008,9 +981,8 @@ function ReviewInsightsCard({  review,
           )}
 
           {review.contextInsights && review.contextInsights.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Related Context Retrieved</p>
-              <div className="space-y-2">
+            <CollapsibleCard title="Related Context Retrieved" defaultExpanded={false}>
+              <div className="space-y-2 pt-2">
                 {review.contextInsights.map((insight) => (
                   <button
                     key={`${insight.file}-${insight.source}-${insight.reason}`}
@@ -1032,13 +1004,12 @@ function ReviewInsightsCard({  review,
                   </button>
                 ))}
               </div>
-            </div>
+            </CollapsibleCard>
           )}
 
           {review.riskHotspots.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Risk Hotspots</p>
-              <div className="space-y-2">
+            <CollapsibleCard title="Risk Hotspots" defaultExpanded={false}>
+              <div className="space-y-2 pt-2">
                 {review.riskHotspots.map((hotspot) => (
                   <button
                     key={hotspot.file}
@@ -1049,33 +1020,13 @@ function ReviewInsightsCard({  review,
                       <span className="text-sm font-mono text-foreground truncate">{hotspot.file}</span>
                       <span className="text-xs font-semibold text-destructive">Risk {hotspot.score}</span>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1">{hotspot.reasons.join(" · ")}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{hotspot.reasons.join(" \u00b7 ")}</p>
                   </button>
                 ))}
               </div>
-            </div>
-          )}
-
-          {review.reviewerSuggestions && review.reviewerSuggestions.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Suggested Reviewers</p>
-              <div className="space-y-2">
-                {review.reviewerSuggestions.map((suggestion) => (
-                  <div key={suggestion.reviewer} className="rounded-xl border border-border bg-card px-4 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-semibold text-foreground">{suggestion.reviewer}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {suggestion.files.length} owned file{suggestion.files.length === 1 ? "" : "s"}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1 break-words">{suggestion.files.join(" · ")}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
+            </CollapsibleCard>
           )}
         </div>
-      )}
     </div>
   );
 }
@@ -1333,14 +1284,6 @@ export function CodeReviewPanel({
       lines.push(``);
       for (const hotspot of review.riskHotspots) {
         lines.push(`- **${hotspot.file}** (${hotspot.score}) — ${hotspot.reasons.join("; ")}`);
-      }
-      lines.push(``);
-    }
-    if (review.reviewerSuggestions && review.reviewerSuggestions.length > 0) {
-      lines.push(`### 👥 Reviewer Routing`);
-      lines.push(``);
-      for (const suggestion of review.reviewerSuggestions) {
-        lines.push(`- **${suggestion.reviewer}** — ${suggestion.files.join(", ")}`);
       }
       lines.push(``);
     }
@@ -1692,8 +1635,7 @@ export function CodeReviewPanel({
       {/* Secondary insights card — collapsed by default */}
       {(review.reviewDiff || review.testGapSummary || review.verificationSummary ||
         (review.contextInsights && review.contextInsights.length > 0) ||
-        review.riskHotspots.length > 0 ||
-        (review.reviewerSuggestions && review.reviewerSuggestions.length > 0)) && (
+        review.riskHotspots.length > 0) && (
         <ReviewInsightsCard
           review={review}
           previousReview={previousReview ?? null}

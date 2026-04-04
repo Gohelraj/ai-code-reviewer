@@ -98,12 +98,6 @@ const review: CodeReview = {
       reasons: ["Touches auth or permission-sensitive code", "Production change without accompanying test updates"],
     },
   ],
-  reviewerSuggestions: [
-    {
-      reviewer: "@security-team",
-      files: ["src/auth.ts"],
-    },
-  ],
   reviewDiff: {
     addedIssueIds: ["issue-1"],
     removedIssueIds: [],
@@ -162,7 +156,6 @@ describe("CodeReviewPanel", () => {
     const riskHotspotsToggle = screen.getByRole("button", { name: /Risk Hotspots/i });
     expect(riskHotspotsToggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("button", { name: /risk 82/i })).not.toBeInTheDocument();
-    expect(screen.getByText("Suggested Reviewers")).toBeInTheDocument();
     expect(screen.getByText("Merge Readiness Gates")).toBeInTheDocument();
     expect(screen.getByText("Requirements coverage")).toBeInTheDocument();
     expect(screen.getByText("AI reviewer")).toBeInTheDocument();

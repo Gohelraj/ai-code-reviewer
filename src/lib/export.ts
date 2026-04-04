@@ -179,14 +179,6 @@ export function exportAsMarkdown(state: AnalysisState): string {
       lines.push(``);
     }
 
-    if (codeReview.reviewerSuggestions && codeReview.reviewerSuggestions.length > 0) {
-      lines.push(`### Reviewer Routing`);
-      for (const suggestion of codeReview.reviewerSuggestions) {
-        lines.push(`- **${suggestion.reviewer}** — ${suggestion.files.join(", ")}`);
-      }
-      lines.push(``);
-    }
-
     if (codeReview.architectureObservations.length > 0) {
       lines.push(`### Architecture Observations`);
       for (const obs of codeReview.architectureObservations) {
