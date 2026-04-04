@@ -745,6 +745,59 @@ function mergeHydratedFile(mrData: MRData, filename: string, content: string | n
   };
 }
 
+/**
+ * Fetches all blob paths in the repository at the head branch.
+ * Used to validate heuristic file candidates before attempting to fetch them,
+ * avoiding 404 API calls for files that don't exist.
+ */
+async function fetchRepoTreePaths(mrData: MRData, token?: string): Promise<string[]> {
+  try {
+    if (mrData.platform === "github") {
+      const parsed = parseGitHubUrl(mrData.pr.url);
+      if (!parsed) return [];
+      const headers: Record<string, string> = {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "AI-Code-Reviewer/1.0",
+      };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const branchRes = await fetch(
+        `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/branches/${encodeURIComponent(mrData.pr.headBranch)}`,
+        { headers },
+      );
+      if (!branchRes.ok) return [];
+      const branch = await branchRes.json() as { commit?: { commit?: { tree?: { sha?: string } } } };
+      const treeSha = branch.commit?.commit?.tree?.sha;
+      if (!treeSha) return [];
+      const treeRes = await fetch(
+        `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/git/trees/${treeSha}?recursive=1`,
+        { headers },
+      );
+      if (!treeRes.ok) return [];
+      const tree = await treeRes.json() as { tree?: Array<{ path?: string; type?: string }> };
+      return (tree.tree ?? [])
+        .filter((e) => e.type === "blob" && !!e.path)
+        .map((e) => e.path as string);
+    }
+
+    // GitLab
+    if (!mrData.projectId) return [];
+    const encodedProjectId = encodeURIComponent(String(mrData.projectId));
+    const ref = encodeURIComponent(mrData.pr.headBranch);
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["PRIVATE-TOKEN"] = token;
+    const treeRes = await fetch(
+      `/api/gitlab/api/v4/projects/${encodedProjectId}/repository/tree?recursive=true&per_page=100&ref=${ref}`,
+      { headers },
+    );
+    if (!treeRes.ok) return [];
+    const tree = await treeRes.json() as Array<{ path?: string; type?: string }>;
+    return tree.filter((e) => e.type === "blob" && !!e.path).map((e) => e.path as string);
+  } catch {
+    return [];
+  }
+}
+
 async function buildRelatedContextInsights(mrData: MRData, reviewMode: ReviewMode, token?: string): Promise<{
   hydrated: MRData;
   insights: ReviewContextInsight[];
@@ -819,6 +872,23 @@ async function buildRelatedContextInsights(mrData: MRData, reviewMode: ReviewMod
       });
     }
   }
+
+  // Build a set of known repository paths to filter out heuristic candidates
+  // (imports, tests, contracts) that don't exist, avoiding wasted 404 API calls.
+  const treePaths = mrData.treePaths ?? (await fetchRepoTreePaths(mrData, token));
+  const treeSet = treePaths.length > 0 ? new Set(treePaths) : null;
+  if (treeSet) {
+    for (const [path, insight] of candidates) {
+      if (
+        (insight.source === "import" || insight.source === "test" || insight.source === "contract") &&
+        !treeSet.has(path)
+      ) {
+        candidates.delete(path);
+      }
+    }
+  }
+  // Propagate tree paths into hydrated so callers can reuse without a second fetch.
+  hydrated = { ...hydrated, treePaths };
 
   const insights: ReviewContextInsight[] = [];
   for (const candidate of candidates.values()) {

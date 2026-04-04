@@ -39,6 +39,8 @@ export interface MRData {
   diffRefs?: DiffRefs;
   /** GitLab numeric project id for follow-up repository API calls */
   projectId?: number | string;
+  /** All blob paths in the repository (head branch). Used to validate file candidates before fetching. */
+  treePaths?: string[];
 }
 
 export interface KeyChange {
