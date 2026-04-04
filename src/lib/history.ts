@@ -37,6 +37,7 @@ export async function saveAnalysis(
   url: string,
   state: AnalysisState,
   aiConfig: AIConfig,
+  existingId?: string | null,
 ): Promise<HistoryEntry | null> {
   try {
     const normalizedConfig = sanitizeAIConfig(aiConfig);
@@ -45,7 +46,7 @@ export async function saveAnalysis(
     const store = tx.objectStore(STORE_NAME);
 
     const entry: HistoryEntry = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: existingId ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       url,
       prTitle: state.mrData?.pr.title ?? "Unknown PR",
       platform: state.mrData?.platform ?? "github",
@@ -55,7 +56,9 @@ export async function saveAnalysis(
       aiConfig: normalizedConfig,
     };
 
-    store.add(entry);
+    // Use put (upsert) so follow-up saves for the same session overwrite the
+    // existing entry instead of creating a duplicate.
+    store.put(entry);
 
     // Prune old entries beyond MAX_ENTRIES
     const index = store.index("timestamp");

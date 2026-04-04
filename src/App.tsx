@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import toast from "react-hot-toast";
 import { InputForm } from "./components/InputForm";
 import type { SubmitPayload } from "./components/InputForm";
@@ -43,11 +43,15 @@ function App() {
   const [loadedFromHistory, setLoadedFromHistory] = useState(false);
   const [loadedHistoryTimestamp, setLoadedHistoryTimestamp] = useState<number | null>(null);
   const [currentHistoryEntryId, setCurrentHistoryEntryId] = useState<string | null>(null);
+  // Ref mirrors currentHistoryEntryId so setState/useCallback closures always
+  // read the latest id without needing it in their dependency arrays.
+  const currentHistoryEntryIdRef = useRef<string | null>(null);
   const { theme, setTheme } = useDarkMode();
 
   const rememberSavedEntry = useCallback((entry: HistoryEntry | null) => {
     if (entry) {
       setCurrentHistoryEntryId(entry.id);
+      currentHistoryEntryIdRef.current = entry.id;
     }
   }, []);
 
@@ -82,6 +86,7 @@ function App() {
     setLoadedFromHistory(false);
     setLoadedHistoryTimestamp(null);
     setCurrentHistoryEntryId(null);
+    currentHistoryEntryIdRef.current = null;
 
     try {
       if (!forceRefresh) {
@@ -99,6 +104,7 @@ function App() {
           setLoadedFromHistory(true);
           setLoadedHistoryTimestamp(existingEntry.timestamp);
           setCurrentHistoryEntryId(existingEntry.id);
+          currentHistoryEntryIdRef.current = existingEntry.id;
           toast.success("Loaded saved analysis. Use Refresh MR to fetch the latest changes.");
           return;
         }
@@ -162,7 +168,7 @@ function App() {
       // Save to history
       // We need to get the latest state, so use a callback
       setState((prev) => {
-        void saveAnalysis(url, prev, normalizedConfig).then(rememberSavedEntry);
+        void saveAnalysis(url, prev, normalizedConfig, currentHistoryEntryIdRef.current).then(rememberSavedEntry);
         return prev;
       });
     } catch (err) {
@@ -271,7 +277,7 @@ function App() {
     setState((prev) => {
       const updated = { ...prev, reviewerNotes: notes };
       if (analysisUrl && activeAIConfig) {
-        void saveAnalysis(analysisUrl, updated, activeAIConfig).then(rememberSavedEntry);
+        void saveAnalysis(analysisUrl, updated, activeAIConfig, currentHistoryEntryIdRef.current).then(rememberSavedEntry);
       }
       return updated;
     });
@@ -309,7 +315,7 @@ function App() {
       toast.success("Execution flow complete!");
       setState((prev) => {
         if (analysisUrl && activeAIConfig) {
-          void saveAnalysis(analysisUrl, prev, activeAIConfig).then(rememberSavedEntry);
+          void saveAnalysis(analysisUrl, prev, activeAIConfig, currentHistoryEntryIdRef.current).then(rememberSavedEntry);
         }
         return prev;
       });
@@ -360,7 +366,7 @@ function App() {
       // Update history with review
       setState((prev) => {
         if (analysisUrl) {
-          void saveAnalysis(analysisUrl, prev, reviewConfig).then(rememberSavedEntry);
+          void saveAnalysis(analysisUrl, prev, reviewConfig, currentHistoryEntryIdRef.current).then(rememberSavedEntry);
         }
         return prev;
       });
@@ -378,7 +384,7 @@ function App() {
     setState((prev) => {
       const updated = { ...prev, reviewChat: messages };
       if (analysisUrl && activeAIConfig) {
-        void saveAnalysis(analysisUrl, updated, activeAIConfig).then(rememberSavedEntry);
+        void saveAnalysis(analysisUrl, updated, activeAIConfig, currentHistoryEntryIdRef.current).then(rememberSavedEntry);
       }
       return updated;
     });
@@ -401,7 +407,7 @@ function App() {
       toast.success("Requirements check complete!");
       setState((prev) => {
         if (analysisUrl && activeAIConfig) {
-          void saveAnalysis(analysisUrl, prev, activeAIConfig).then(rememberSavedEntry);
+          void saveAnalysis(analysisUrl, prev, activeAIConfig, currentHistoryEntryIdRef.current).then(rememberSavedEntry);
         }
         return prev;
       });
@@ -422,7 +428,7 @@ function App() {
       toast.success("MR description review complete!");
       setState((prev) => {
         if (analysisUrl && activeAIConfig) {
-          void saveAnalysis(analysisUrl, prev, activeAIConfig).then(rememberSavedEntry);
+          void saveAnalysis(analysisUrl, prev, activeAIConfig, currentHistoryEntryIdRef.current).then(rememberSavedEntry);
         }
         return prev;
       });
