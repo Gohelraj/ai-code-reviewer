@@ -28,6 +28,10 @@ function createMemoryStorage(): Storage {
 }
 
 beforeAll(() => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
   const localStorageMock = createMemoryStorage();
   const sessionStorageMock = createMemoryStorage();
 
@@ -87,5 +91,7 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  window.history.replaceState({}, "", "/");
+  if (typeof window !== "undefined") {
+    window.history.replaceState({}, "", "/");
+  }
 });

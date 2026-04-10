@@ -1,6 +1,10 @@
 import type { MRData, ChangeSummary, ExecutionFlow, CodeReview, RequirementsCheck, MRDescriptionReview, FileDiff, PRInfo, RepoReviewMemory, ReviewContextInsight, ReviewIssue } from "../types";
 import { DEFAULT_PRIMARY_MODEL, normalizeOpenRouterModel } from "../components/AISettings";
 import type { AIConfig, ReviewMode } from "../components/AISettings";
+import { buildStructuredContext, buildStructuredContextText } from "../core/context/contextBuilder";
+import { analyzeImpact, buildImpactAnalysisText } from "../core/context/impactAnalyzer";
+import { buildRuntimeSignalsText, detectRuntimeSignals } from "../core/context/runtimeChecks";
+import { buildFunctionIndex, findFunctionDefinition } from "../core/context/functionIndex";
 import { computeRiskHotspots, computeTestGapSummary, getReviewContextPlan } from "./review-utils";
 import { formatRepoReviewMemory, hasRepoReviewMemory, parseRepoReviewMemory, summarizeRepoReviewMemory } from "./repo-memory";
 
@@ -604,35 +608,25 @@ function resolveRelativeImportCandidates(fromFile: string, importPath: string): 
   ]);
 }
 
-function extractRelativeImports(content: string): string[] {
-  const matches = content.matchAll(/(?:from\s+|require\(|import\()\s*["']([^"']+)["']/g);
-  const imports: string[] = [];
-  for (const match of matches) {
-    if (match[1]?.startsWith(".")) {
-      imports.push(match[1]);
-    }
-  }
-  return dedupe(imports);
-}
+async function extractCodeIntelligence(filePath: string, content: string): Promise<{
+  imports: string[];
+  symbols: string[];
+}> {
+  const { parseFile: parseAstFile } = await import("../core/ast/languageAdapter");
+  const parsed = await parseAstFile(filePath, content);
+  const symbols = dedupe([
+    ...parsed.functions.map((fn) => fn.name),
+    ...parsed.classes.map((cls) => cls.name),
+    ...parsed.methods.map((method) => method.name),
+    ...parsed.calls,
+  ])
+    .filter((symbol) => symbol.length > 2 && !["const", "return", "throw", "import", "export"].includes(symbol))
+    .slice(0, 10);
 
-function extractInterestingSymbols(text: string): string[] {
-  const symbols = new Set<string>();
-  const regexes = [
-    /\b(?:function|class|interface|type|enum|const|let)\s+([A-Za-z_][A-Za-z0-9_]*)/g,
-    /\b([A-Z][A-Za-z0-9_]{2,})\b/g,
-    /\b([a-z][A-Za-z0-9_]{3,})\s*\(/g,
-  ];
-
-  for (const regex of regexes) {
-    for (const match of text.matchAll(regex)) {
-      const symbol = match[1];
-      if (symbol && symbol.length > 2 && !["const", "return", "throw", "import", "export"].includes(symbol)) {
-        symbols.add(symbol);
-      }
-    }
-  }
-
-  return Array.from(symbols).slice(0, 10);
+  return {
+    imports: parsed.imports.filter((entry) => entry.startsWith(".")),
+    symbols,
+  };
 }
 
 function findSnippetAroundSymbol(content: string, symbols: string[], fallbackLines = 18): string {
@@ -810,9 +804,10 @@ async function buildRelatedContextInsights(mrData: MRData, reviewMode: ReviewMod
   let hydrated = mrData;
 
   for (const file of selectedFiles) {
-    const sourceText = [file.patch ?? "", file.fullContent ?? ""].filter(Boolean).join("\n");
-    const symbols = extractInterestingSymbols(sourceText);
-    const imports = file.fullContent ? extractRelativeImports(file.fullContent) : [];
+    const sourceText = file.fullContent ?? "";
+    const { symbols, imports } = sourceText
+      ? await extractCodeIntelligence(file.filename, sourceText)
+      : { symbols: [], imports: [] };
 
     for (const importPath of imports.flatMap((entry) => resolveRelativeImportCandidates(file.filename, entry)).slice(0, 6)) {
       candidates.set(importPath, {
@@ -889,6 +884,8 @@ async function buildRelatedContextInsights(mrData: MRData, reviewMode: ReviewMod
   // Propagate tree paths into hydrated so callers can reuse without a second fetch.
   hydrated = { ...hydrated, treePaths };
 
+  const functionIndex = await buildFunctionIndex(hydrated.files);
+
   const insights: ReviewContextInsight[] = [];
   for (const candidate of candidates.values()) {
     const existing = hydrated.files.find((file) => file.filename === candidate.file);
@@ -901,9 +898,17 @@ async function buildRelatedContextInsights(mrData: MRData, reviewMode: ReviewMod
     }
 
     if (!content) continue;
+    const parsedCandidate = await extractCodeIntelligence(candidate.file, content);
+    const definitionMatch = parsedCandidate.symbols
+      .map((symbol) => ({ symbol, definition: findFunctionDefinition(functionIndex, symbol) }))
+      .find((match) => match.definition?.file === candidate.file);
+
     insights.push({
       ...candidate,
-      excerpt: candidate.excerpt || findSnippetAroundSymbol(content, extractInterestingSymbols(content)),
+      reason: definitionMatch
+        ? `${candidate.reason}; defines ${definitionMatch.symbol}`
+        : candidate.reason,
+      excerpt: candidate.excerpt || definitionMatch?.definition?.body || findSnippetAroundSymbol(content, parsedCandidate.symbols),
     });
   }
 
@@ -1452,6 +1457,19 @@ export async function analyzeCodeReview(mrData: MRData, aiConfig: AIConfig, toke
   const diffContent = buildContextAwareDiff(files, reviewMode);
   const hasFullContent = files.some((f) => f.fullContent);
   const relatedContextText = buildRelatedContextText(insights);
+  const structuredContext = await buildStructuredContext(
+    files.filter((file) => file.status !== "context"),
+    files,
+    insights,
+  );
+  const structuredContextText = buildStructuredContextText(structuredContext);
+  const impact = analyzeImpact(
+    files.filter((file) => file.status !== "context"),
+    structuredContext,
+  );
+  const impactText = buildImpactAnalysisText(impact);
+  const runtimeSignals = await detectRuntimeSignals(files);
+  const runtimeSignalsText = buildRuntimeSignalsText(runtimeSignals);
   const structuredRepoMemory = hasRepoReviewMemory(repoMemory) ? formatRepoReviewMemory(repoMemory) : "";
   const repoMemorySummary = hasRepoReviewMemory(repoMemory) ? summarizeRepoReviewMemory(repoMemory) : "";
 
@@ -1471,6 +1489,8 @@ Use the full file content (when present) to catch issues that only appear in con
   - Security issues like hardcoded secrets, missing auth checks, injection vectors
   
   You also receive RELATED REPOSITORY CONTEXT pulled from nearby imports, sibling files, likely tests, and contract/type files. Use it to validate cross-file behavior and reduce false positives.
+  You also receive STRUCTURED EXECUTION CONTEXT built from AST parsing, function definitions, and the call graph. Use it to reason about changed functions, direct callers, direct callees, imports, and nearby related files.
+  You also receive IMPACT ANALYSIS and RUNTIME SIGNALS. Treat them as high-signal hints about change risk and production behavior, but validate them against the code before escalating a finding.
   Repository memory, when provided, describes stable architecture intent and known exceptions. Respect it over generic style preferences.
 
   Be precise: always provide the exact file path and line reference when flagging an issue.
@@ -1491,6 +1511,10 @@ Use the full file content (when present) to catch issues that only appear in con
   For each issue:
   - set confidence to low, medium, or high based on how strongly the evidence supports the finding
   - set rationale to 1 sentence explaining why the finding matters in this specific PR
+  - detect cross-file bugs when a changed function's callers or callees suggest a broken contract
+  - detect API misuse, especially wrong arguments, wrong return-value assumptions, or incompatible cross-file usage
+  - detect async issues in JavaScript/TypeScript, including unawaited promises, async work inside loops, and missing error handling
+  - detect Go concurrency risks when the code or surrounding context suggests goroutines, shared state, or unsafe coordination
   - set fixable to true when a concrete code-level fix can be proposed from the provided context${
     structuredRepoMemory
       ? "\n- treat REPOSITORY REVIEW MEMORY as high-priority context about intentional patterns, business rules, and what should or should not be flagged for this repo"
@@ -1504,6 +1528,8 @@ Use the full file content (when present) to catch issues that only appear in con
       ? `\n\nADDITIONAL REVIEWER RULES (from the team — follow these strictly):\n${aiConfig.customRules.trim()}`
       : ""
   }
+  - use IMPACT ANALYSIS to calibrate risk and prioritization for review findings
+  - use RUNTIME SIGNALS to look for production hazards, but do not overstate weak heuristic evidence
   - add verificationStatus as "verified" when the evidence is directly supported by the supplied code/context, otherwise "uncertain"
   - include evidence entries for each issue, using the most relevant sources from diff, full file, related files, tests, contracts, or repo memory
   - include contextInsights listing only the files that meaningfully influenced the review`;
@@ -1527,7 +1553,16 @@ Use the full file content (when present) to catch issues that only appear in con
   ${aiConfig.customRules.trim()}
   
   `
-    : ""}RELATED CONTEXT:
+    : ""}STRUCTURED EXECUTION CONTEXT:
+  ${structuredContextText}
+  
+  IMPACT:
+  ${impactText}
+  
+  RUNTIME SIGNALS:
+  ${runtimeSignalsText}
+  
+  RELATED CONTEXT:
   ${relatedContextText}
   
   FILE CONTEXT + DIFFS:
