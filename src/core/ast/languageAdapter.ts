@@ -52,8 +52,7 @@ async function parseFileUncached(filePath: string, content: string): Promise<Par
       return createEmptyParsedFileAst();
     }
 
-    const goParserModuleUrl = new URL("./goParser.ts", import.meta.url).href;
-    const { parseGoSource } = await import(/* @vite-ignore */ goParserModuleUrl);
+    const { parseGoSource } = await import(/* @vite-ignore */ "./goParser");
     return parseGoSource(filePath, content);
   }
 
