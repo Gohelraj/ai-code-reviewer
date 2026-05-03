@@ -25,6 +25,13 @@ const REVIEW_MODE_CONFIG = {
     perFilePatchChars: 6_000,
     perFileFullChars: 15_000,
   },
+  max: {
+    maxFiles: 40,
+    maxFullFiles: Infinity,
+    totalContextChars: 400_000,
+    perFilePatchChars: 12_000,
+    perFileFullChars: 50_000,
+  },
 } as const;
 
 export interface ReviewContextPlan {

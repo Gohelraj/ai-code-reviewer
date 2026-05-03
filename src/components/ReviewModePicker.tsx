@@ -15,7 +15,7 @@ export function ReviewModePicker({ value, onChange, disabled = false, compact = 
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Review Depth</p>
           {!compact && (
             <p className="mt-1 text-xs text-muted-foreground">
-              Quick keeps review latency lower. Deep uses more context for broader analysis.
+              Quick is fast and low-cost. Deep fetches full file context. Max uses the full model context window with base branch snapshots, agentic file planning, and all available signals.
             </p>
           )}
         </div>
@@ -27,6 +27,7 @@ export function ReviewModePicker({ value, onChange, disabled = false, compact = 
         >
           <option value="quick">Quick review</option>
           <option value="deep">Deep review</option>
+          <option value="max">Max review</option>
         </select>
       </div>
     </div>

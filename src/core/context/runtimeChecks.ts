@@ -1,4 +1,5 @@
 import type { FileDiff } from "../../types";
+import { detectRuntimeAstSignals } from "../ast/tsParser";
 
 export type RuntimeSignal = {
   file: string;
@@ -20,11 +21,6 @@ function dedupeSignals(signals: RuntimeSignal[]): RuntimeSignal[] {
   });
 }
 
-async function parseWithAst(filePath: string, content: string) {
-  const { parseFile } = await import("../ast/languageAdapter");
-  return parseFile(filePath, content);
-}
-
 function isTsLike(filePath: string): boolean {
   return /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/.test(filePath);
 }
@@ -39,43 +35,42 @@ async function detectNodeSignals(file: FileDiff): Promise<RuntimeSignal[]> {
     return [];
   }
 
-  const parsed = await parseWithAst(file.filename, content);
   const signals: RuntimeSignal[] = [];
 
-  const callNames = parsed.calls;
-  const hasPromiseLikeCalls = callNames.some((name) => /(fetch|then|catch|all|race|resolve|reject|save|create|update|delete|request|query)/i.test(name));
-  const hasAwait = /\bawait\b/.test(content);
-  const hasForLoop = /\bfor\s*\(|\bfor\s+const\b|\bfor\s+let\b/.test(content);
-  const hasTryCatch = /\btry\b[\s\S]*\bcatch\b/.test(content);
+  try {
+    const ast = detectRuntimeAstSignals(content, file.filename);
 
-  if (hasPromiseLikeCalls && !hasAwait && /\basync\b|\bPromise\b/.test(content)) {
-    signals.push({
-      file: file.filename,
-      category: "node",
-      severity: "warning",
-      kind: "unawaited-promises",
-      summary: "Async or promise-like calls appear without matching await usage in the changed file",
-    });
-  }
+    if (ast.hasAwaitInLoop) {
+      signals.push({
+        file: file.filename,
+        category: "node",
+        severity: "warning",
+        kind: "async-in-loop",
+        summary: "Await expression found inside a loop body — may cause unintended serial execution or missed parallelism",
+      });
+    }
 
-  if (hasAwait && hasForLoop) {
-    signals.push({
-      file: file.filename,
-      category: "node",
-      severity: "warning",
-      kind: "async-in-loop",
-      summary: "Await appears alongside loop constructs, which can hide serial latency or control-flow bugs",
-    });
-  }
+    if (ast.hasUnawaitedAsyncCall) {
+      signals.push({
+        file: file.filename,
+        category: "node",
+        severity: "warning",
+        kind: "unawaited-promises",
+        summary: "Async-pattern call used as a statement without await — the returned Promise may be silently discarded",
+      });
+    }
 
-  if ((/\basync\b/.test(content) || hasPromiseLikeCalls) && !hasTryCatch) {
-    signals.push({
-      file: file.filename,
-      category: "node",
-      severity: "info",
-      kind: "missing-error-handling",
-      summary: "Async logic appears without nearby try/catch handling in the changed file",
-    });
+    if (ast.hasAsyncWithoutErrorHandling) {
+      signals.push({
+        file: file.filename,
+        category: "node",
+        severity: "info",
+        kind: "missing-error-handling",
+        summary: "Async function body has no try/catch — unhandled rejections will propagate to callers silently",
+      });
+    }
+  } catch {
+    // AST parse failure (e.g. syntax error in diff fragment) — skip signals for this file
   }
 
   return signals;

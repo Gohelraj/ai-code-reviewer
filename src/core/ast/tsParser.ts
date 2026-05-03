@@ -79,3 +79,62 @@ export function parseTypeScriptSource(content: string, filePath = "inline.ts"): 
   sourceFile.forget();
   return parsed;
 }
+
+export interface RuntimeAstSignals {
+  hasAwaitInLoop: boolean;
+  hasUnawaitedAsyncCall: boolean;
+  hasAsyncWithoutErrorHandling: boolean;
+}
+
+export function detectRuntimeAstSignals(content: string, filePath = "inline.ts"): RuntimeAstSignals {
+  const checkPath = `__rt_${filePath.replace(/[^a-zA-Z0-9_.]/g, "_")}`;
+  const scriptKind = filePath.endsWith("x") ? ScriptKind.TSX : ScriptKind.TS;
+  const sourceFile = project.createSourceFile(checkPath, content, { overwrite: true, scriptKind });
+
+  try {
+    const loopKinds = [
+      SyntaxKind.ForStatement,
+      SyntaxKind.ForOfStatement,
+      SyntaxKind.ForInStatement,
+      SyntaxKind.WhileStatement,
+      SyntaxKind.DoStatement,
+    ] as const;
+
+    const hasAwaitInLoop = loopKinds.some((kind) =>
+      sourceFile.getDescendantsOfKind(kind).some((loop) =>
+        loop.getDescendantsOfKind(SyntaxKind.AwaitExpression).length > 0,
+      ),
+    );
+
+    const ASYNC_CALL_PATTERN = /^(fetch|save|create|update|delete|remove|send|emit|dispatch|commit|post|put|patch|load|execute|run|perform|handle|submit|upload|download|connect|authenticate|authorize|publish|subscribe|notify|trigger|push|pull|sync|refresh|persist|write|insert|replace|upsert)($|[A-Z_])/;
+
+    const hasUnawaitedAsyncCall = sourceFile
+      .getDescendantsOfKind(SyntaxKind.ExpressionStatement)
+      .some((stmt) => {
+        const expr = stmt.getExpression();
+        if (!Node.isCallExpression(expr)) return false;
+        const name = getCallName(expr.getExpression());
+        return ASYNC_CALL_PATTERN.test(name);
+      });
+
+    const asyncFunctions = [
+      ...sourceFile.getFunctions().filter((fn) => fn.isAsync()),
+      ...sourceFile.getClasses().flatMap((cls) => cls.getMethods().filter((m) => m.isAsync())),
+    ];
+
+    const asyncArrowFunctions = sourceFile.getVariableDeclarations().filter((v) => {
+      const init = v.getInitializer();
+      return !!init && (Node.isArrowFunction(init) || Node.isFunctionExpression(init)) && init.isAsync();
+    });
+
+    const hasAsyncWithoutErrorHandling = [...asyncFunctions, ...asyncArrowFunctions].some((fn) => {
+      const body = "getBody" in fn ? fn.getBody() : null;
+      if (!body || !Node.isBlock(body)) return false;
+      return body.getDescendantsOfKind(SyntaxKind.TryStatement).length === 0;
+    });
+
+    return { hasAwaitInLoop, hasUnawaitedAsyncCall, hasAsyncWithoutErrorHandling };
+  } finally {
+    sourceFile.forget();
+  }
+}

@@ -5,10 +5,23 @@ import { buildStructuredContext, buildStructuredContextText } from "../core/cont
 import { analyzeImpact, buildImpactAnalysisText } from "../core/context/impactAnalyzer";
 import { buildRuntimeSignalsText, detectRuntimeSignals } from "../core/context/runtimeChecks";
 import { buildFunctionIndex, findFunctionDefinition } from "../core/context/functionIndex";
-import { computeRiskHotspots, computeTestGapSummary, getReviewContextPlan } from "./review-utils";
+import { computeRiskHotspots, computeTestGapSummary, getReviewContextPlan, isProductionCodeFile } from "./review-utils";
 import { formatRepoReviewMemory, hasRepoReviewMemory, parseRepoReviewMemory, summarizeRepoReviewMemory } from "./repo-memory";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
+
+async function runWithConcurrency<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let nextIndex = 0;
+  async function worker(): Promise<void> {
+    while (nextIndex < tasks.length) {
+      const index = nextIndex++;
+      results[index] = await tasks[index]();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => worker()));
+  return results;
+}
 
 // ─── GitHub direct (CORS: access-control-allow-origin: *) ────────────────────
 
@@ -508,7 +521,7 @@ export function buildDiffContent(files: FileDiff[]): string {
  * Used for code review: full file content + diff per changed file.
  * Files sorted by change size (most-changed first). Respects total token budget.
  */
-export function buildContextAwareDiff(files: FileDiff[], reviewMode: ReviewMode = "deep"): string {
+export function buildContextAwareDiff(files: FileDiff[], reviewMode: ReviewMode = "deep", baseContentMap?: Map<string, string>): string {
   const plan = getReviewContextPlan(files, reviewMode);
   const planFiles = plan.selectedFiles
     .map((filename) => files.find((file) => file.filename === filename))
@@ -523,6 +536,12 @@ export function buildContextAwareDiff(files: FileDiff[], reviewMode: ReviewMode 
 
     const header = `### ${f.filename} [${f.status}] +${f.additions}/-${f.deletions}`;
     const sections: string[] = [header];
+
+    const baseContent = baseContentMap?.get(f.filename);
+    if (baseContent && f.status === "modified") {
+      const base = baseContent.slice(0, Math.floor(plan.perFileFullChars * 0.6));
+      sections.push(`\nBASE FILE (state before this PR's changes):\n\`\`\`\n${base}\n\`\`\``);
+    }
 
     if (plan.fullContentFiles.includes(f.filename) && f.fullContent && f.status !== "removed") {
       const content = f.fullContent.slice(0, plan.perFileFullChars);
@@ -674,7 +693,7 @@ function guessContractPaths(filename: string): string[] {
   ]);
 }
 
-async function fetchRepositoryFileContent(mrData: MRData, path: string, token?: string): Promise<string | null> {
+async function fetchRepositoryFileContent(mrData: MRData, path: string, token?: string, refOverride?: string): Promise<string | null> {
   if (mrData.platform === "github") {
     const parsed = parseGitHubUrl(mrData.pr.url);
     if (!parsed) return null;
@@ -686,7 +705,7 @@ async function fetchRepositoryFileContent(mrData: MRData, path: string, token?: 
     if (token) headers.Authorization = `Bearer ${token}`;
 
     const encodedPath = path.split("/").map(encodeURIComponent).join("/");
-    const ref = encodeURIComponent(mrData.pr.headBranch);
+    const ref = encodeURIComponent(refOverride ?? mrData.pr.headBranch);
     const res = await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents/${encodedPath}?ref=${ref}`, { headers });
     if (!res.ok) return null;
     const data = await res.json() as { content?: string; encoding?: string };
@@ -701,7 +720,7 @@ async function fetchRepositoryFileContent(mrData: MRData, path: string, token?: 
 
   const encodedProject = encodeURIComponent(parsed.projectPath);
   const encodedFile = encodeURIComponent(path);
-  const ref = encodeURIComponent(mrData.pr.headBranch);
+  const ref = encodeURIComponent(refOverride ?? mrData.pr.headBranch);
   const res = await fetch(`/api/gitlab/api/v4/projects/${encodedProject}/repository/files/${encodedFile}/raw?ref=${ref}`, { headers });
   if (!res.ok) return null;
   return res.text();
@@ -736,6 +755,67 @@ function mergeHydratedFile(mrData: MRData, filename: string, content: string | n
       },
     ],
   };
+}
+
+interface ExistingComment {
+  author: string;
+  body: string;
+  path?: string;
+}
+
+async function fetchExistingPRComments(mrData: MRData, token?: string): Promise<ExistingComment[]> {
+  try {
+    if (mrData.platform === "github") {
+      const parsed = parseGitHubUrl(mrData.pr.url);
+      if (!parsed) return [];
+      const headers: Record<string, string> = {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "AI-Code-Reviewer/1.0",
+      };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const { owner, repo, prNumber } = parsed;
+      const [reviewRes, generalRes] = await Promise.all([
+        fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/comments?per_page=50`, { headers }),
+        fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=20`, { headers }),
+      ]);
+      const comments: ExistingComment[] = [];
+      if (reviewRes.ok) {
+        type GHReviewComment = { user: { login: string }; body: string; path?: string };
+        const data = await reviewRes.json() as GHReviewComment[];
+        comments.push(...data.map((c) => ({ author: c.user.login, body: c.body, path: c.path })));
+      }
+      if (generalRes.ok) {
+        type GHComment = { user: { login: string }; body: string };
+        const data = await generalRes.json() as GHComment[];
+        comments.push(...data.map((c) => ({ author: c.user.login, body: c.body })));
+      }
+      return comments.slice(0, 60);
+    }
+
+    const parsed = parseGitLabUrl(mrData.pr.url);
+    if (!parsed || !mrData.projectId) return [];
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["PRIVATE-TOKEN"] = token;
+    const encodedProjectId = encodeURIComponent(String(mrData.projectId));
+    const res = await fetch(`/api/gitlab/api/v4/projects/${encodedProjectId}/merge_requests/${parsed.mrIid}/notes?per_page=50`, { headers });
+    if (!res.ok) return [];
+    type GLNote = { author: { username: string }; body: string; position?: { new_path?: string }; system?: boolean };
+    const notes = await res.json() as GLNote[];
+    return notes
+      .filter((n) => !n.system)
+      .map((n) => ({ author: n.author.username, body: n.body, path: n.position?.new_path }))
+      .slice(0, 60);
+  } catch {
+    return [];
+  }
+}
+
+function buildExistingCommentsText(comments: ExistingComment[]): string {
+  if (comments.length === 0) return "";
+  return comments
+    .map((c) => `- ${c.author}${c.path ? ` on \`${c.path}\`` : ""}: ${c.body.trim().slice(0, 300)}`)
+    .join("\n");
 }
 
 /**
@@ -884,33 +964,53 @@ async function buildRelatedContextInsights(mrData: MRData, reviewMode: ReviewMod
   // Propagate tree paths into hydrated so callers can reuse without a second fetch.
   hydrated = { ...hydrated, treePaths };
 
+  // Identify which candidates need remote fetching vs those already available locally
+  const candidateList = Array.from(candidates.values());
+  const toFetch = candidateList.filter((candidate) => {
+    const existing = hydrated.files.find((f) => f.filename === candidate.file);
+    return !existing?.fullContent && !existing?.patch;
+  });
+
+  // Fetch all missing files in parallel (concurrency-limited to avoid rate limits)
+  const fetchedPairs = await runWithConcurrency(
+    toFetch.map((candidate) => async () => ({
+      file: candidate.file,
+      content: await fetchRepositoryFileContent(hydrated, candidate.file, token),
+    })),
+    6,
+  );
+
+  // Sequential merge to keep hydrated state consistent
+  for (const { file, content } of fetchedPairs) {
+    hydrated = mergeHydratedFile(hydrated, file, content);
+  }
+
+  // Build function index AFTER all files are merged for better call-graph coverage
   const functionIndex = await buildFunctionIndex(hydrated.files);
 
-  const insights: ReviewContextInsight[] = [];
-  for (const candidate of candidates.values()) {
-    const existing = hydrated.files.find((file) => file.filename === candidate.file);
-    let content = existing?.fullContent ?? null;
-    if (!content && !existing?.patch) {
-      content = await fetchRepositoryFileContent(hydrated, candidate.file, token);
-      hydrated = mergeHydratedFile(hydrated, candidate.file, content);
-    } else if (!content && existing?.patch) {
-      content = existing.patch;
-    }
+  // Run AST intelligence extraction for all candidates in parallel
+  const insightResults = await Promise.all(
+    candidateList.map(async (candidate) => {
+      const existing = hydrated.files.find((f) => f.filename === candidate.file);
+      const content = existing?.fullContent ?? existing?.patch ?? null;
+      if (!content) return null;
 
-    if (!content) continue;
-    const parsedCandidate = await extractCodeIntelligence(candidate.file, content);
-    const definitionMatch = parsedCandidate.symbols
-      .map((symbol) => ({ symbol, definition: findFunctionDefinition(functionIndex, symbol) }))
-      .find((match) => match.definition?.file === candidate.file);
+      const parsedCandidate = await extractCodeIntelligence(candidate.file, content);
+      const definitionMatch = parsedCandidate.symbols
+        .map((symbol) => ({ symbol, definition: findFunctionDefinition(functionIndex, symbol) }))
+        .find((match) => match.definition?.file === candidate.file);
 
-    insights.push({
-      ...candidate,
-      reason: definitionMatch
-        ? `${candidate.reason}; defines ${definitionMatch.symbol}`
-        : candidate.reason,
-      excerpt: candidate.excerpt || definitionMatch?.definition?.body || findSnippetAroundSymbol(content, parsedCandidate.symbols),
-    });
-  }
+      return {
+        ...candidate,
+        reason: definitionMatch
+          ? `${candidate.reason}; defines ${definitionMatch.symbol}`
+          : candidate.reason,
+        excerpt: candidate.excerpt || definitionMatch?.definition?.body || findSnippetAroundSymbol(content, parsedCandidate.symbols),
+      } as ReviewContextInsight;
+    }),
+  );
+
+  const insights = insightResults.filter((i): i is ReviewContextInsight => i !== null);
 
   return {
     hydrated,
@@ -1025,13 +1125,89 @@ async function hydrateFilesForReview(mrData: MRData, filenames: string[], token?
   };
 }
 
+async function planAdditionalReviewFiles(mrData: MRData, aiConfig: AIConfig, token?: string): Promise<MRData> {
+  const treePaths = mrData.treePaths;
+  if (!treePaths || treePaths.length === 0 || !aiConfig.apiKey) return mrData;
+
+  const diffSummary = mrData.files
+    .filter((f) => f.status !== "removed")
+    .map((f) => `${f.filename} [${f.status}] +${f.additions}/-${f.deletions}`)
+    .join("\n");
+
+  const changedSet = new Set(mrData.files.map((f) => f.filename));
+  const candidates = treePaths
+    .filter((p) => !changedSet.has(p))
+    .filter((p) => !/\.(lock|min\.js|map|snap|generated\.|d\.ts$)|node_modules\/|dist\/|build\/|\.cache\/|coverage\//.test(p))
+    .sort((a, b) => scoreRepoContextPath(b) - scoreRepoContextPath(a))
+    .slice(0, 80)
+    .map((p) => `- ${p}`)
+    .join("\n");
+
+  if (!candidates) return mrData;
+
+  try {
+    const result = await callOpenRouter<{ paths: string[] }>(
+      aiConfig.apiKey,
+      getModelForTask(aiConfig, "summary"),
+      [
+        {
+          role: "system",
+          content: "You are selecting additional repository files to fetch as context for a thorough code review. Choose only files directly relevant to verifying the correctness, safety, or completeness of the listed changes. Prefer callers of changed functions, shared utilities, config files, auth/permission modules, or type definitions used by the changed code. Return at most 5 file paths.",
+        },
+        {
+          role: "user",
+          content: `PR: ${mrData.pr.title}\nBranch: ${mrData.pr.headBranch} → ${mrData.pr.baseBranch}\n\nCHANGED FILES:\n${diffSummary}\n\nCANDIDATE FILES (not in PR):\n${candidates}\n\nWhich files would most help verify these changes?`,
+        },
+      ],
+      REPO_CONTEXT_FILE_SELECTION_SCHEMA,
+    );
+
+    const validPaths = result.paths
+      .filter((p) => treePaths.includes(p) && !changedSet.has(p))
+      .slice(0, 5);
+
+    if (validPaths.length === 0) return mrData;
+
+    const fetchedContents = await Promise.all(
+      validPaths.map(async (path) => ({
+        path,
+        content: await fetchRepositoryFileContent(mrData, path, token),
+      })),
+    );
+
+    let updated = mrData;
+    for (const { path, content } of fetchedContents) {
+      if (content) updated = mergeHydratedFile(updated, path, content);
+    }
+    return updated;
+  } catch {
+    return mrData;
+  }
+}
+
+async function fetchBaseVersionsForTopFiles(mrData: MRData, maxFiles: number, token?: string): Promise<Map<string, string>> {
+  if (maxFiles === 0) return new Map();
+  const topFiles = [...mrData.files]
+    .filter((f) => f.status === "modified" && isProductionCodeFile(f.filename))
+    .sort((a, b) => b.changes - a.changes)
+    .slice(0, maxFiles);
+
+  const entries = await Promise.all(
+    topFiles.map(async (file) => {
+      const content = await fetchRepositoryFileContent(mrData, file.filename, token, mrData.pr.baseBranch);
+      return content ? ([file.filename, content] as const) : null;
+    }),
+  );
+  return new Map(entries.filter((e): e is [string, string] => e !== null));
+}
+
 export async function prepareMRDataForReview(mrData: MRData, aiConfig: AIConfig, token?: string): Promise<MRData> {
   const reviewMode = aiConfig.reviewMode ?? "deep";
   const plan = getReviewContextPlan(mrData.files, reviewMode);
   return hydrateFilesForReview(mrData, plan.fullContentFiles, token);
 }
 
-function getModelForTask(aiConfig: AIConfig, task: "summary" | "flow" | "review" | "requirements" | "mr-description" | "chat" | "fix"): string {
+function getModelForTask(aiConfig: AIConfig, task: "summary" | "flow" | "review" | "verify" | "requirements" | "mr-description" | "chat" | "fix"): string {
   if (task === "review") {
     return normalizeOpenRouterModel(aiConfig.model, DEFAULT_PRIMARY_MODEL);
   }
@@ -1452,10 +1628,22 @@ export async function analyzeCodeReview(mrData: MRData, aiConfig: AIConfig, toke
   const reviewMode = aiConfig.reviewMode ?? "deep";
   const repoMemory = parseRepoReviewMemory(aiConfig.repoMemory);
   const prepared = await prepareMRDataForReview(mrData, aiConfig, token);
-  const { hydrated, insights } = await buildRelatedContextInsights(prepared, reviewMode, token);
+
+  // Parallel: related context insights, existing PR comments, and base branch snapshots
+  const baseFileCount = reviewMode === "quick" ? 0 : reviewMode === "max" ? 5 : 3;
+  const [{ hydrated: hydratedRaw, insights }, existingComments, baseContentMap] = await Promise.all([
+    buildRelatedContextInsights(prepared, reviewMode, token),
+    fetchExistingPRComments(prepared, token),
+    fetchBaseVersionsForTopFiles(prepared, baseFileCount, token),
+  ]);
+
+  // Agentic planning: AI selects additional files to fetch (skipped in quick mode)
+  const hydrated = reviewMode !== "quick" ? await planAdditionalReviewFiles(hydratedRaw, aiConfig, token) : hydratedRaw;
+
   const { pr, files } = hydrated;
-  const diffContent = buildContextAwareDiff(files, reviewMode);
+  const diffContent = buildContextAwareDiff(files, reviewMode, baseContentMap);
   const hasFullContent = files.some((f) => f.fullContent);
+  const hasBaseContent = baseContentMap.size > 0;
   const relatedContextText = buildRelatedContextText(insights);
   const structuredContext = await buildStructuredContext(
     files.filter((file) => file.status !== "context"),
@@ -1477,7 +1665,7 @@ export async function analyzeCodeReview(mrData: MRData, aiConfig: AIConfig, toke
 
   For each changed file you receive:
   ${hasFullContent
-    ? "1. FULL FILE — the complete current state of the file after this PR's changes, so you can see imports, types, existing patterns, and how all code fits together\n2. DIFF — the exact lines added/removed"
+    ? `1. ${hasBaseContent ? "BASE FILE — the complete state before this PR's changes (use it to understand what was deleted, replaced, or restructured)\n2. " : ""}FULL FILE — the complete current state of the file after this PR's changes, so you can see imports, types, existing patterns, and how all code fits together\n${hasBaseContent ? "3" : "2"}. DIFF — the exact lines added/removed`
   : "- DIFF — the exact lines added/removed (full file context unavailable for this repository)"}
 
 Use the full file content (when present) to catch issues that only appear in context:
@@ -1564,7 +1752,12 @@ Use the full file content (when present) to catch issues that only appear in con
   
   RELATED CONTEXT:
   ${relatedContextText}
-  
+  ${existingComments.length > 0
+    ? `
+  EXISTING REVIEW COMMENTS (${existingComments.length} already posted — avoid duplicating these, but build on or contradict them if the code evidence demands it):
+  ${buildExistingCommentsText(existingComments)}
+  `
+    : ""}
   FILE CONTEXT + DIFFS:
   ${diffContent}
   
@@ -1577,7 +1770,7 @@ Use the full file content (when present) to catch issues that only appear in con
 
   const verification = await callOpenRouter<{ verificationSummary: string; issues: ReviewIssue[] }>(
     aiConfig.apiKey,
-    getModelForTask(aiConfig, "review"),
+    getModelForTask(aiConfig, "verify"),
     [
       {
         role: "system",
