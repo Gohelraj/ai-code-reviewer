@@ -67,7 +67,14 @@ export function parseTypeScriptSource(content: string, filePath = "inline.ts"): 
       })),
   );
 
-  parsed.imports = sourceFile.getImportDeclarations().map((declaration) => declaration.getModuleSpecifierValue());
+  parsed.imports = sourceFile.getImportDeclarations().flatMap((declaration) => {
+    try {
+      const value = declaration.getModuleSpecifierValue();
+      return value ? [value] : [];
+    } catch {
+      return [];
+    }
+  });
 
   parsed.calls = dedupe(
     sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression).map((callExpression) => {
