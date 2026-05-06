@@ -9,6 +9,11 @@ export default defineConfig({
       '@': path.resolve(import.meta.dirname, './src'),
     },
   },
+  build: {
+    rollupOptions: {
+      external: ["node:child_process", "node:url", "node:path", "child_process"],
+    },
+  },
   server: {
     port: 3000,
     strictPort: true,
