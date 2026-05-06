@@ -1,13 +1,13 @@
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { createEmptyParsedFileAst, type ParsedFileAst } from "./types";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const goHelperPath = join(__dirname, "go-helper", "main.go");
 
 export async function parseGoSource(filePath: string, content: string): Promise<ParsedFileAst> {
   try {
+    const { spawn } = await import("node:child_process");
+    const { fileURLToPath } = await import("node:url");
+    const { dirname, join } = await import("node:path");
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const goHelperPath = join(__dirname, "go-helper", "main.go");
+
     const stdout = await new Promise<string>((resolve, reject) => {
       const child = spawn("go", ["run", goHelperPath], {
         env: {
