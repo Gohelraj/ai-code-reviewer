@@ -241,6 +241,19 @@ export function SetupWizard({
                     placeholder="ghp_xxxx or glpat-xxxx"
                     className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm text-foreground transition-all placeholder:text-muted-foreground/60 focus:border-foreground/30 focus:outline-none focus:ring-2 focus:ring-accent/20"
                   />
+                  {platformLabel === "GitLab" && (
+                    <div className="mt-3 space-y-1.5">
+                      <p className="text-xs font-medium text-foreground">Required PAT scopes</p>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="inline-flex items-center rounded-md border border-border bg-secondary/60 px-2 py-0.5 text-xs font-mono text-foreground">read_api</span>
+                        <span className="text-xs text-muted-foreground">read MR diffs, commits, repo files</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="inline-flex items-center rounded-md border border-border bg-secondary/60 px-2 py-0.5 text-xs font-mono text-foreground">api</span>
+                        <span className="text-xs text-muted-foreground">also needed to post review comments back</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <label className="flex items-start gap-2 rounded-2xl border border-border bg-background px-4 py-3 text-sm text-muted-foreground">

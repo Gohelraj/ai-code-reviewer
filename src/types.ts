@@ -8,6 +8,8 @@ export interface FileDiff {
   blobUrl: string | null;
   /** Full file content at HEAD (post-change). Populated for context-aware code review. */
   fullContent?: string | null;
+  /** Full file content at the base branch (pre-change). Populated for the top changed files in deep/max review mode. */
+  baseContent?: string | null;
 }
 
 export interface PRInfo {

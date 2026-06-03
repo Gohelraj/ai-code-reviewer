@@ -62,7 +62,6 @@ function buildReview(overrides: Partial<CodeReview> = {}): CodeReview {
     testingAssessment: "Tests should be expanded.",
     testGapSummary: "Production code changed but no test files were modified. Reviewers should verify whether test coverage is missing or intentionally unchanged.",
     riskHotspots: [],
-    reviewerSuggestions: [],
     mergeReadiness: "Do not merge yet.",
     ...overrides,
   };

@@ -6,7 +6,7 @@ import type { AnalysisState } from "../types";
 
 export type PostingMode = "inline" | "general";
 export type AnalysisStartMode = "summary-only" | "summary-and-flow";
-export type ReviewMode = "quick" | "deep";
+export type ReviewMode = "quick" | "deep" | "max";
 
 export interface AIPreset {
   id: string;

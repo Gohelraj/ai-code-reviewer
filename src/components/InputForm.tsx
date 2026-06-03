@@ -731,15 +731,30 @@ export function InputForm({ onSubmit, isLoading, theme, onThemeChange, onLoadHis
                                   )}
                                 </div>
                                 {platformLabel === "GitLab" && (
-                                  <a
-                                    href="https://docs.gitlab.com/user/profile/personal_access_tokens/"
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                                  >
-                                    <Key size={11} />
-                                    How to create a GitLab personal access token
-                                  </a>
+                                  <div className="mt-3 space-y-2">
+                                    <p className="text-xs font-medium text-foreground">Required PAT scopes</p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      <span className="inline-flex items-center rounded-md border border-border bg-secondary/60 px-2 py-0.5 text-xs font-mono text-foreground">
+                                        read_api
+                                      </span>
+                                      <span className="text-xs text-muted-foreground self-center">to read MR diffs, commits and repo files</span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      <span className="inline-flex items-center rounded-md border border-border bg-secondary/60 px-2 py-0.5 text-xs font-mono text-foreground">
+                                        api
+                                      </span>
+                                      <span className="text-xs text-muted-foreground self-center">also needed if posting review comments back</span>
+                                    </div>
+                                    <a
+                                      href="https://docs.gitlab.com/user/profile/personal_access_tokens/"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                                    >
+                                      <Key size={11} />
+                                      How to create a GitLab personal access token
+                                    </a>
+                                  </div>
                                 )}
                               </motion.div>
                             </div>
