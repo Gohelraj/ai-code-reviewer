@@ -27,6 +27,76 @@ The app is intentionally client-heavy:
 - Selective posting back to GitHub/GitLab as inline or general comments
 - Local history, repo-aware presets, per-repo defaults, deep-linkable result state, and cached-analysis reload with manual refresh
 
+## Code Review Flow
+
+```mermaid
+flowchart TD
+    INPUT["URL · Token · AI Config\n(model, mode, custom rules)"]
+
+    INPUT --> FETCH
+
+    FETCH["Phase 1 — Fetch MR Diff\nGitHub API direct · GitLab API via proxy\n→ MRData: metadata + FileDiff[] + diffRefs"]
+
+    FETCH --> BASELINE & SUMMARY & FLOW
+
+    subgraph PHASE2["Phase 2 — Auto (on load)"]
+        SUMMARY["analyzeSummary()\nREPO CONTEXT + diff\n→ ChangeSummary"]
+        FLOW["analyzeExecutionFlow()\nActual directory layers + diff\n→ ExecutionFlow"]
+    end
+
+    subgraph BASELINEBOX["Repo Baseline — 24 h cache per repo"]
+        BASELINE["getOrDeriveRepoBaseline()\nREADME · config · entrypoints\n→ AI-derived RepoReviewMemory"]
+        CACHE[("localStorage\nrepo-baseline-v1:key")]
+        BASELINE <--> CACHE
+    end
+
+    FETCH --> PHASE3_TRIGGER
+
+    PHASE3_TRIGGER["Phase 3 — Code Review\n(manual trigger)"]
+
+    PHASE3_TRIGGER --> HYDRATE & RELATED & BASEVERSIONS
+
+    subgraph CONTEXT["Context Building — parallel"]
+        HYDRATE["prepareMRDataForReview()\nFetch full file content\nfor top-ranked changed files"]
+        RELATED["buildRelatedContextInsights()\nImports · tests · contracts · siblings\nValidated against full repo tree\n(GitLab: paginated · GitHub: recursive)"]
+        BASEVERSIONS["fetchBaseVersionsForTopFiles()\nPre-PR state of top N files\n→ BASE FILE sections"]
+    end
+
+    CONTEXT --> PLAN
+
+    PLAN["planAdditionalReviewFiles()\nTop 15 tree candidates\n+ 400-char content previews\n→ AI selects 5 most relevant"]
+
+    PLAN --> ASSEMBLY
+
+    subgraph ASSEMBLY["Analysis Assembly"]
+        DIFF["buildContextAwareDiff()\nBASE FILE + FULL FILE + DIFF\nper review-mode token budget"]
+        AST["buildStructuredContext()\nAST · function index · call graph\ncross-file impact analysis"]
+        RUNTIME["detectRuntimeSignals()\nasync/await patterns\nconcurrency risks"]
+        MEMORY["Repo Review Memory\nmanual or auto-derived\narchitecture · domain rules\npatterns · avoid-flagging list"]
+        STYLE["REPO STYLE BASELINE\n1–2 representative context files\nestablished conventions"]
+    end
+
+    ASSEMBLY --> PASS1
+
+    PASS1["AI Review Pass 1 — OpenRouter\nCandidate findings with\nevidence · confidence · rationale"]
+    PASS1 --> PASS2
+
+    PASS2["AI Review Pass 2 — Verify\nFilter unsupported findings\ncalibrate confidence\n→ verified / uncertain"]
+
+    PASS2 --> RESULT
+
+    RESULT["CodeReview\nverdict · score · issues\nrisk hotspots · merge readiness\ntest-gap summary"]
+
+    RESULT --> POST & HISTORY
+
+    POST["Post to Platform\nInline: GitHub PR review API\n         GitLab discussions + position\nGeneral: issues/notes API"]
+    HISTORY[("IndexedDB\nhistory · review diff\nscore delta between runs")]
+
+    BASELINE --> SUMMARY
+    BASELINE --> FLOW
+    BASELINE --> MEMORY
+```
+
 ## Runtime Model
 
 1. Paste a GitHub PR or GitLab MR URL.

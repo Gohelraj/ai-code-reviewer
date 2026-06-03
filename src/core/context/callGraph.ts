@@ -93,6 +93,7 @@ export function buildCallGraph(functionIndex: FunctionIndex): CallGraph {
     graph[group.canonicalName].calls = resolvedCalls;
 
     for (const callee of resolvedCalls) {
+      if (!graph[callee]) continue;
       graph[callee].calledBy = dedupe([...graph[callee].calledBy, group.canonicalName]);
     }
   }

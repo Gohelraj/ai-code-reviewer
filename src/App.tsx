@@ -4,8 +4,9 @@ import { InputForm } from "./components/InputForm";
 import type { SubmitPayload } from "./components/InputForm";
 import { AnalysisProgress } from "./components/AnalysisProgress";
 import { ResultsDashboard } from "./components/ResultsDashboard";
-import { fetchMRDiff, analyzeSummary, analyzeExecutionFlow, analyzeCodeReview, fetchIssueData, analyzeRequirements, analyzeMRDescription, prepareMRDataForReview } from "./lib/api";
+import { fetchMRDiff, analyzeSummary, analyzeExecutionFlow, analyzeCodeReview, fetchIssueData, analyzeRequirements, analyzeMRDescription, prepareMRDataForReview, getOrDeriveRepoBaseline } from "./lib/api";
 import type { IssueData } from "./lib/api";
+import { getCachedBaseline } from "./lib/repo-baseline-cache";
 import { clearAnalysisHistory, deleteAnalysesForUrl, deleteAnalysis, getLatestHistoryForUrl, getLatestReviewHistoryForUrl, saveAnalysis } from "./lib/history";
 import type { HistoryEntry } from "./lib/history";
 import type { AnalysisState } from "./types";
@@ -46,6 +47,8 @@ function App() {
   // Ref mirrors currentHistoryEntryId so setState/useCallback closures always
   // read the latest id without needing it in their dependency arrays.
   const currentHistoryEntryIdRef = useRef<string | null>(null);
+  // Holds the in-flight or resolved repo baseline promise for the current MR's repo.
+  const repoBaselineRef = useRef<Promise<string | null>>(Promise.resolve(null));
   const { theme, setTheme } = useDarkMode();
 
   const rememberSavedEntry = useCallback((entry: HistoryEntry | null) => {
@@ -139,9 +142,17 @@ function App() {
           : null,
       });
 
+      // Start repo baseline derivation in parallel with Phase 2.
+      // Uses a 24h localStorage cache so repeat visits return instantly.
+      const repoKey = getRepoKeyFromUrl(url);
+      const immediateBaseline = repoKey ? getCachedBaseline(repoKey) : null;
+      repoBaselineRef.current = immediateBaseline
+        ? Promise.resolve(immediateBaseline)
+        : getOrDeriveRepoBaseline(mrData, normalizedConfig, token).catch(() => null);
+
       // Step 2: Summarize + flow in parallel (requirements & MR desc are manual)
       updateState({ step: "summarizing" });
-      const summaryPromise = analyzeSummary(mrData, normalizedConfig).then((summary) => {
+      const summaryPromise = analyzeSummary(mrData, normalizedConfig, immediateBaseline).then((summary) => {
         updateState({ summary, activeTab: "summary" });
         return summary;
       });
@@ -149,7 +160,7 @@ function App() {
       if ((normalizedConfig.analysisStartMode ?? "summary-and-flow") === "summary-and-flow") {
         updateState({ step: "flowing" });
         setFlowLoading(true);
-        const flowPromise = analyzeExecutionFlow(mrData, normalizedConfig).then((executionFlow) => {
+        const flowPromise = analyzeExecutionFlow(mrData, normalizedConfig, immediateBaseline).then((executionFlow) => {
           updateState({ executionFlow });
           return executionFlow;
         }).finally(() => {
@@ -314,7 +325,8 @@ function App() {
     if (!state.mrData || !activeAIConfig || flowLoading) return;
     setFlowLoading(true);
     try {
-      const executionFlow = await analyzeExecutionFlow(state.mrData, activeAIConfig);
+      const repoBaseline = await repoBaselineRef.current;
+      const executionFlow = await analyzeExecutionFlow(state.mrData, activeAIConfig, repoBaseline);
       updateState({ executionFlow, activeTab: "flow" });
       toast.success("Execution flow complete!");
       setState((prev) => {
@@ -352,8 +364,9 @@ function App() {
       : state.previousReviewMeta ?? null;
 
     try {
+      const repoBaseline = await repoBaselineRef.current;
       const preparedMRData = await prepareMRDataForReview(state.mrData, reviewConfig, analysisToken);
-      const codeReview = await analyzeCodeReview(preparedMRData, reviewConfig, analysisToken);
+      const codeReview = await analyzeCodeReview(preparedMRData, reviewConfig, analysisToken, repoBaseline);
       codeReview.reviewDiff = computeReviewDiff(baselineReview, codeReview);
       updateState({
         mrData: preparedMRData,

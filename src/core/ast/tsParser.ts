@@ -33,58 +33,64 @@ function getCallName(expression: Node): string {
 
 export function parseTypeScriptSource(content: string, filePath = "inline.ts"): ParsedFileAst {
   const scriptKind = filePath.endsWith("x") ? ScriptKind.TSX : ScriptKind.TS;
-  const sourceFile = project.createSourceFile(filePath, content, { overwrite: true, scriptKind });
-  const parsed = createEmptyParsedFileAst();
+  let sourceFile: ReturnType<typeof project.createSourceFile> | undefined;
+  try {
+    sourceFile = project.createSourceFile(filePath, content, { overwrite: true, scriptKind });
+    const parsed = createEmptyParsedFileAst();
 
-  parsed.functions = [
-    ...sourceFile.getFunctions().map((fn) => ({
-      name: fn.getName() ?? "anonymous",
-      body: fn.getBodyText() ?? "",
-    })),
-    ...sourceFile.getVariableDeclarations()
-      .filter((declaration) => {
-        const initializer = declaration.getInitializer();
-        return !!initializer && (Node.isArrowFunction(initializer) || Node.isFunctionExpression(initializer));
-      })
-      .map((declaration) => ({
-        name: declaration.getName(),
-        body: declaration.getInitializer()?.getText() ?? "",
+    parsed.functions = [
+      ...sourceFile.getFunctions().map((fn) => ({
+        name: fn.getName() ?? "anonymous",
+        body: fn.getBodyText() ?? "",
       })),
-  ];
+      ...sourceFile.getVariableDeclarations()
+        .filter((declaration) => {
+          const initializer = declaration.getInitializer();
+          return !!initializer && (Node.isArrowFunction(initializer) || Node.isFunctionExpression(initializer));
+        })
+        .map((declaration) => ({
+          name: declaration.getName(),
+          body: declaration.getInitializer()?.getText() ?? "",
+        })),
+    ];
 
-  parsed.classes = sourceFile.getClasses().map((cls) => ({
-    name: cls.getName() ?? "AnonymousClass",
-    body: cls.getText(),
-  }));
+    parsed.classes = sourceFile.getClasses().map((cls) => ({
+      name: cls.getName() ?? "AnonymousClass",
+      body: cls.getText(),
+    }));
 
-  parsed.methods = sourceFile.getClasses().flatMap((cls) =>
-    cls.getMembers()
-      .filter(Node.isMethodDeclaration)
-      .map((method) => ({
-        name: method.getName(),
-        className: method.getParentIfKind(SyntaxKind.ClassDeclaration)?.getName() ?? cls.getName() ?? "AnonymousClass",
-        body: method.getBodyText() ?? "",
-      })),
-  );
+    parsed.methods = sourceFile.getClasses().flatMap((cls) =>
+      cls.getMembers()
+        .filter(Node.isMethodDeclaration)
+        .map((method) => ({
+          name: method.getName(),
+          className: method.getParentIfKind(SyntaxKind.ClassDeclaration)?.getName() ?? cls.getName() ?? "AnonymousClass",
+          body: method.getBodyText() ?? "",
+        })),
+    );
 
-  parsed.imports = sourceFile.getImportDeclarations().flatMap((declaration) => {
-    try {
-      const value = declaration.getModuleSpecifierValue();
-      return value ? [value] : [];
-    } catch {
-      return [];
-    }
-  });
+    parsed.imports = sourceFile.getImportDeclarations().flatMap((declaration) => {
+      try {
+        const value = declaration.getModuleSpecifierValue();
+        return value ? [value] : [];
+      } catch {
+        return [];
+      }
+    });
 
-  parsed.calls = dedupe(
-    sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression).map((callExpression) => {
-      const expression = callExpression.getExpression();
-      return getCallName(expression);
-    }),
-  );
+    parsed.calls = dedupe(
+      sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression).map((callExpression) => {
+        const expression = callExpression.getExpression();
+        return getCallName(expression);
+      }),
+    );
 
-  sourceFile.forget();
-  return parsed;
+    return parsed;
+  } catch {
+    return createEmptyParsedFileAst();
+  } finally {
+    try { sourceFile?.forget(); } catch { /* ignore forget errors on corrupt state */ }
+  }
 }
 
 export interface RuntimeAstSignals {
@@ -96,7 +102,12 @@ export interface RuntimeAstSignals {
 export function detectRuntimeAstSignals(content: string, filePath = "inline.ts"): RuntimeAstSignals {
   const checkPath = `__rt_${filePath.replace(/[^a-zA-Z0-9_.]/g, "_")}`;
   const scriptKind = filePath.endsWith("x") ? ScriptKind.TSX : ScriptKind.TS;
-  const sourceFile = project.createSourceFile(checkPath, content, { overwrite: true, scriptKind });
+  let sourceFile: ReturnType<typeof project.createSourceFile> | undefined;
+  try {
+    sourceFile = project.createSourceFile(checkPath, content, { overwrite: true, scriptKind });
+  } catch {
+    return { hasAwaitInLoop: false, hasUnawaitedAsyncCall: false, hasAsyncWithoutErrorHandling: false };
+  }
 
   try {
     const loopKinds = [
@@ -141,7 +152,9 @@ export function detectRuntimeAstSignals(content: string, filePath = "inline.ts")
     });
 
     return { hasAwaitInLoop, hasUnawaitedAsyncCall, hasAsyncWithoutErrorHandling };
+  } catch {
+    return { hasAwaitInLoop: false, hasUnawaitedAsyncCall: false, hasAsyncWithoutErrorHandling: false };
   } finally {
-    sourceFile.forget();
+    try { sourceFile?.forget(); } catch { /* ignore forget errors on corrupt state */ }
   }
 }

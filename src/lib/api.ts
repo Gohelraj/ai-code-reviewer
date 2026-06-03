@@ -5,8 +5,9 @@ import { buildStructuredContext, buildStructuredContextText } from "../core/cont
 import { analyzeImpact, buildImpactAnalysisText } from "../core/context/impactAnalyzer";
 import { buildRuntimeSignalsText, detectRuntimeSignals } from "../core/context/runtimeChecks";
 import { buildFunctionIndex, findFunctionDefinition } from "../core/context/functionIndex";
-import { computeRiskHotspots, computeTestGapSummary, getReviewContextPlan, isProductionCodeFile } from "./review-utils";
+import { computeRiskHotspots, computeTestGapSummary, getReviewContextPlan, getRepoKeyFromUrl, isProductionCodeFile, isTestFile } from "./review-utils";
 import { formatRepoReviewMemory, hasRepoReviewMemory, parseRepoReviewMemory, summarizeRepoReviewMemory } from "./repo-memory";
+import { getCachedBaseline, setCachedBaseline } from "./repo-baseline-cache";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -853,19 +854,34 @@ async function fetchRepoTreePaths(mrData: MRData, token?: string): Promise<strin
         .map((e) => e.path as string);
     }
 
-    // GitLab
+    // GitLab — paginate until the tree is exhausted or we hit the cap.
+    // A single per_page=100 request misses files on subsequent pages, causing
+    // incomplete treeSet validation and spurious 404 API calls downstream.
     if (!mrData.projectId) return [];
     const encodedProjectId = encodeURIComponent(String(mrData.projectId));
     const ref = encodeURIComponent(mrData.pr.headBranch);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (token) headers["PRIVATE-TOKEN"] = token;
-    const treeRes = await fetch(
-      `/api/gitlab/api/v4/projects/${encodedProjectId}/repository/tree?recursive=true&per_page=100&ref=${ref}`,
-      { headers },
-    );
-    if (!treeRes.ok) return [];
-    const tree = await treeRes.json() as Array<{ path?: string; type?: string }>;
-    return tree.filter((e) => e.type === "blob" && !!e.path).map((e) => e.path as string);
+
+    const allPaths: string[] = [];
+    let page = 1;
+    const MAX_PAGES = 20; // caps at ~2 000 files; enough for any real monorepo
+    while (page <= MAX_PAGES) {
+      const res = await fetch(
+        `/api/gitlab/api/v4/projects/${encodedProjectId}/repository/tree?recursive=true&per_page=100&page=${page}&ref=${ref}`,
+        { headers },
+      );
+      if (!res.ok) break;
+      const items = await res.json() as Array<{ path?: string; type?: string }>;
+      if (!Array.isArray(items) || items.length === 0) break;
+      allPaths.push(...items.filter((e) => e.type === "blob" && !!e.path).map((e) => e.path as string));
+      const nextPage = res.headers.get("x-next-page");
+      if (!nextPage) break;
+      const next = Number(nextPage);
+      if (!next || isNaN(next)) break;
+      page = next;
+    }
+    return allPaths;
   } catch {
     return [];
   }
@@ -951,14 +967,14 @@ async function buildRelatedContextInsights(mrData: MRData, reviewMode: ReviewMod
   // (imports, tests, contracts) that don't exist, avoiding wasted 404 API calls.
   const treePaths = mrData.treePaths ?? (await fetchRepoTreePaths(mrData, token));
   const treeSet = treePaths.length > 0 ? new Set(treePaths) : null;
-  if (treeSet) {
-    for (const [path, insight] of candidates) {
-      if (
-        (insight.source === "import" || insight.source === "test" || insight.source === "contract") &&
-        !treeSet.has(path)
-      ) {
-        candidates.delete(path);
-      }
+  for (const [path, insight] of candidates) {
+    if (insight.source !== "import" && insight.source !== "test" && insight.source !== "contract") continue;
+    // When tree data is available, keep only paths confirmed to exist.
+    // When tree data is unavailable, drop all heuristic candidates entirely —
+    // each import generates 20+ extension variants so blind fetching is almost
+    // entirely 404s and wastes quota.
+    if (!treeSet || !treeSet.has(path)) {
+      candidates.delete(path);
     }
   }
   // Propagate tree paths into hydrated so callers can reuse without a second fetch.
@@ -1135,15 +1151,38 @@ async function planAdditionalReviewFiles(mrData: MRData, aiConfig: AIConfig, tok
     .join("\n");
 
   const changedSet = new Set(mrData.files.map((f) => f.filename));
-  const candidates = treePaths
+  const topCandidatePaths = treePaths
     .filter((p) => !changedSet.has(p))
     .filter((p) => !/\.(lock|min\.js|map|snap|generated\.|d\.ts$)|node_modules\/|dist\/|build\/|\.cache\/|coverage\//.test(p))
     .sort((a, b) => scoreRepoContextPath(b) - scoreRepoContextPath(a))
-    .slice(0, 80)
-    .map((p) => `- ${p}`)
-    .join("\n");
+    .slice(0, 15);
 
-  if (!candidates) return mrData;
+  if (topCandidatePaths.length === 0) return mrData;
+
+  // Fetch 400-char previews for candidates not already in mrData.files, so the
+  // AI can make semantic choices rather than guessing from paths alone.
+  const toPreview = topCandidatePaths
+    .filter((p) => !mrData.files.find((f) => f.filename === p)?.fullContent)
+    .slice(0, 10);
+
+  const previews = await runWithConcurrency(
+    toPreview.map((path) => async () => {
+      const content = await fetchRepositoryFileContent(mrData, path, token);
+      const preview = content
+        ? content.split("\n").slice(0, 8).join(" | ").slice(0, 400)
+        : "";
+      return { path, preview };
+    }),
+    6,
+  );
+  const previewMap = new Map(previews.map((p) => [p.path, p.preview]));
+
+  const candidates = topCandidatePaths
+    .map((p) => {
+      const preview = previewMap.get(p);
+      return preview ? `- ${p}\n  > ${preview}` : `- ${p}`;
+    })
+    .join("\n");
 
   try {
     const result = await callOpenRouter<{ paths: string[] }>(
@@ -1152,11 +1191,11 @@ async function planAdditionalReviewFiles(mrData: MRData, aiConfig: AIConfig, tok
       [
         {
           role: "system",
-          content: "You are selecting additional repository files to fetch as context for a thorough code review. Choose only files directly relevant to verifying the correctness, safety, or completeness of the listed changes. Prefer callers of changed functions, shared utilities, config files, auth/permission modules, or type definitions used by the changed code. Return at most 5 file paths.",
+          content: "You are selecting additional repository files to fetch as context for a thorough code review. Choose only files directly relevant to verifying the correctness, safety, or completeness of the listed changes. Prefer callers of changed functions, shared utilities, config files, auth/permission modules, or type definitions used by the changed code. Use the content previews to make semantic choices — prefer files whose preview shows they define or use symbols from the changed files. Return at most 5 file paths.",
         },
         {
           role: "user",
-          content: `PR: ${mrData.pr.title}\nBranch: ${mrData.pr.headBranch} → ${mrData.pr.baseBranch}\n\nCHANGED FILES:\n${diffSummary}\n\nCANDIDATE FILES (not in PR):\n${candidates}\n\nWhich files would most help verify these changes?`,
+          content: `PR: ${mrData.pr.title}\nBranch: ${mrData.pr.headBranch} → ${mrData.pr.baseBranch}\n\nCHANGED FILES:\n${diffSummary}\n\nCANDIDATE FILES (with content previews):\n${candidates}\n\nWhich files would most help verify these changes?`,
         },
       ],
       REPO_CONTEXT_FILE_SELECTION_SCHEMA,
@@ -1541,6 +1580,26 @@ ${sourcesText}`;
   return formatRepoReviewMemory(memory);
 }
 
+export async function getOrDeriveRepoBaseline(
+  mrData: MRData,
+  aiConfig: AIConfig,
+  token?: string,
+): Promise<string | null> {
+  const repoKey = getRepoKeyFromUrl(mrData.pr.url);
+  if (!repoKey || !aiConfig.apiKey) return null;
+
+  const cached = getCachedBaseline(repoKey);
+  if (cached) return cached;
+
+  try {
+    const baseline = await generateRepoContext(mrData.pr.url, aiConfig, token, mrData);
+    if (baseline) setCachedBaseline(repoKey, baseline);
+    return baseline;
+  } catch {
+    return null;
+  }
+}
+
 function buildRelatedContextText(insights: ReviewContextInsight[]): string {
   if (insights.length === 0) {
     return "No additional related repository context was retrieved.";
@@ -1552,6 +1611,33 @@ function buildRelatedContextText(insights: ReviewContextInsight[]): string {
       const excerpt = insight.excerpt?.trim() ? `\nExcerpt:\n${insight.excerpt.trim()}` : "";
       return `### ${insight.file}\nSource: ${sourceLabel}\nReason: ${insight.reason}${excerpt}`;
     })
+    .join("\n\n");
+}
+
+function getMostCommonExtension(files: FileDiff[]): string {
+  const counts = new Map<string, number>();
+  for (const f of files) {
+    const m = f.filename.match(/(\.[^.]+)$/);
+    if (m) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1);
+  }
+  let best = "";
+  let bestCount = 0;
+  for (const [ext, count] of counts) {
+    if (count > bestCount) { best = ext; bestCount = count; }
+  }
+  return best;
+}
+
+function buildRepoStyleBaseline(files: FileDiff[], mainExtension: string): string {
+  const styleFiles = files
+    .filter((f) => f.status === "context" && f.fullContent && !isTestFile(f.filename) && isProductionCodeFile(f.filename))
+    .filter((f) => !mainExtension || f.filename.endsWith(mainExtension))
+    .slice(0, 2);
+
+  if (styleFiles.length === 0) return "";
+
+  return styleFiles
+    .map((f) => `### ${f.filename}\n\`\`\`\n${f.fullContent!.slice(0, 1500)}\n\`\`\``)
     .join("\n\n");
 }
 
@@ -1575,19 +1661,20 @@ function normalizeReviewIssue(issue: ReviewIssue, index: number): ReviewIssue {
   };
 }
 
-export async function analyzeSummary(mrData: MRData, aiConfig: AIConfig): Promise<ChangeSummary> {
+export async function analyzeSummary(mrData: MRData, aiConfig: AIConfig, repoBaseline?: string | null): Promise<ChangeSummary> {
   const { pr, files } = mrData;
   const diffContent = buildDiffContent(files);
 
   if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required. Please configure it in AI Settings.");
 
-  const systemPrompt = `You are an expert software engineer reviewing a pull/merge request. Analyze the PR and produce a structured summary. Always return valid JSON matching the exact schema.\nKeep all text fields concise: short bullet points or 1-sentence values. Avoid prose paragraphs. No filler openers.`;
+  const hasBaseline = !!repoBaseline?.trim();
+  const systemPrompt = `You are an expert software engineer reviewing a pull/merge request${hasBaseline ? " with full knowledge of this repository's purpose, architecture, and established patterns" : ""}. Analyze the PR and produce a structured summary. Always return valid JSON matching the exact schema.\nKeep all text fields concise: short bullet points or 1-sentence values. Avoid prose paragraphs. No filler openers.`;
   const userPrompt = `PR Title: ${pr.title}
 PR Description: ${pr.description || "No description provided"}
 Base Branch: ${pr.baseBranch} → Head Branch: ${pr.headBranch}
 Author: ${pr.author}
 Stats: ${pr.changedFiles} files changed, +${pr.additions}/-${pr.deletions} lines, ${pr.commits} commit(s)
-
+${hasBaseline ? `\nREPO CONTEXT (use to frame the summary in terms of this repo's established architecture and patterns):\n${repoBaseline!.slice(0, 3000)}\n` : ""}
 FILE DIFFS:
 ${diffContent}
 
@@ -1599,34 +1686,55 @@ Provide a comprehensive summary. For breakingChangesDescription, use an empty st
     ], SUMMARY_SCHEMA);
 }
 
-export async function analyzeExecutionFlow(mrData: MRData, aiConfig: AIConfig): Promise<ExecutionFlow> {
+function deriveRepoLayerHints(files: FileDiff[]): string {
+  const dirCounts = new Map<string, number>();
+  for (const f of files) {
+    const parts = f.filename.split("/");
+    if (parts.length > 1) {
+      const dir = parts.slice(0, Math.min(2, parts.length - 1)).join("/");
+      dirCounts.set(dir, (dirCounts.get(dir) ?? 0) + 1);
+    }
+  }
+  if (dirCounts.size === 0) return "";
+  return [...dirCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([dir, n]) => `${dir}/ (${n} file${n > 1 ? "s" : ""})`)
+    .join(", ");
+}
+
+export async function analyzeExecutionFlow(mrData: MRData, aiConfig: AIConfig, repoBaseline?: string | null): Promise<ExecutionFlow> {
   const { pr, files } = mrData;
   const diffContent = buildDiffContent(files);
 
   if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required. Please configure it in AI Settings.");
 
+  const layerHints = deriveRepoLayerHints(files);
+  const hasBaseline = !!repoBaseline?.trim();
   const fileList = files.map((f) => `${f.filename} [${f.status}]`).join("\n");
-    const systemPrompt = `You are a senior software architect. Organize changed files into a logical execution flow grouped by architectural layer. Always return valid JSON.`;
-    const userPrompt = `PR Title: ${pr.title}
+  const systemPrompt = `You are a senior software architect. Organize changed files into a logical execution flow grouped by architectural layer. Always return valid JSON.`;
+  const userPrompt = `PR Title: ${pr.title}
 Changed Files:
 ${fileList}
-
+${layerHints ? `\nDETECTED REPOSITORY DIRECTORIES: ${layerHints}\nUse these actual directories to name your layer groups — reflect the real structure of this codebase instead of generic labels like "Service" or "Repository".` : ""}
+${hasBaseline ? `\nREPO CONTEXT (use to understand the actual architectural layers in this codebase):\n${repoBaseline!.slice(0, 2000)}\n` : ""}
 FILE DIFFS:
 ${diffContent}
 
-Organize files into execution flow groups (Route/Entry → Middleware → Controller → Service → Repository/DAL → Model/Schema → Utils → Tests → Config). For callsInto, always provide an array (empty [] if none).`;
+Organize files into execution flow groups that reflect this repository's ACTUAL architecture. ${layerHints ? "Name layers after the real directories shown above (e.g. use 'src/api' not generic 'Controller')." : "Use standard layers: Route/Entry → Middleware → Controller → Service → Repository/DAL → Model/Schema → Utils → Tests → Config."} For callsInto, always provide an array (empty [] if none).`;
 
-    return callOpenRouter<ExecutionFlow>(aiConfig.apiKey, getModelForTask(aiConfig, "flow"), [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ], FLOW_SCHEMA);
+  return callOpenRouter<ExecutionFlow>(aiConfig.apiKey, getModelForTask(aiConfig, "flow"), [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt },
+  ], FLOW_SCHEMA);
 }
 
-export async function analyzeCodeReview(mrData: MRData, aiConfig: AIConfig, token?: string): Promise<CodeReview> {
+export async function analyzeCodeReview(mrData: MRData, aiConfig: AIConfig, token?: string, repoBaseline?: string | null): Promise<CodeReview> {
   if (!aiConfig.apiKey) throw new Error("OpenRouter API key is required. Please configure it in AI Settings.");
 
   const reviewMode = aiConfig.reviewMode ?? "deep";
-  const repoMemory = parseRepoReviewMemory(aiConfig.repoMemory);
+  // Use manually-set repoMemory if present; fall back to auto-derived baseline
+  const effectiveMemoryString = aiConfig.repoMemory?.trim() || repoBaseline || "";
+  const repoMemory = parseRepoReviewMemory(effectiveMemoryString);
   const prepared = await prepareMRDataForReview(mrData, aiConfig, token);
 
   // Parallel: related context insights, existing PR comments, and base branch snapshots
@@ -1660,6 +1768,8 @@ export async function analyzeCodeReview(mrData: MRData, aiConfig: AIConfig, toke
   const runtimeSignalsText = buildRuntimeSignalsText(runtimeSignals);
   const structuredRepoMemory = hasRepoReviewMemory(repoMemory) ? formatRepoReviewMemory(repoMemory) : "";
   const repoMemorySummary = hasRepoReviewMemory(repoMemory) ? summarizeRepoReviewMemory(repoMemory) : "";
+  const mainExtension = getMostCommonExtension(files.filter((f) => f.status !== "context" && f.status !== "removed"));
+  const repoStyleBaseline = buildRepoStyleBaseline(files, mainExtension);
 
   const systemPrompt = `You are a very senior software engineer (10+ years) performing a ${reviewMode === "quick" ? "fast, high-signal" : "thorough, context-aware"} code review.
 
@@ -1720,7 +1830,11 @@ Use the full file content (when present) to catch issues that only appear in con
   - use RUNTIME SIGNALS to look for production hazards, but do not overstate weak heuristic evidence
   - add verificationStatus as "verified" when the evidence is directly supported by the supplied code/context, otherwise "uncertain"
   - include evidence entries for each issue, using the most relevant sources from diff, full file, related files, tests, contracts, or repo memory
-  - include contextInsights listing only the files that meaningfully influenced the review`;
+  - include contextInsights listing only the files that meaningfully influenced the review${
+    repoStyleBaseline
+      ? "\n  - use REPO STYLE BASELINE to identify deviations from established conventions in this codebase (naming, error handling, patterns, structure); flag deviations not justified by the PR description"
+      : ""
+  }`;
 
   const userPrompt = `PR Title: ${pr.title}
   PR Description: ${pr.description || "No description"}
@@ -1752,7 +1866,9 @@ Use the full file content (when present) to catch issues that only appear in con
   
   RELATED CONTEXT:
   ${relatedContextText}
-  ${existingComments.length > 0
+  ${repoStyleBaseline
+    ? `\nREPO STYLE BASELINE (representative files showing established patterns in this codebase — flag deviations in the PR that are not explained by the PR description):\n${repoStyleBaseline}\n`
+    : ""}${existingComments.length > 0
     ? `
   EXISTING REVIEW COMMENTS (${existingComments.length} already posted — avoid duplicating these, but build on or contradict them if the code evidence demands it):
   ${buildExistingCommentsText(existingComments)}
@@ -1760,7 +1876,7 @@ Use the full file content (when present) to catch issues that only appear in con
     : ""}
   FILE CONTEXT + DIFFS:
   ${diffContent}
-  
+
   Produce a senior-level review that catches cross-file regressions, contract drift, duplicated patterns, risky auth/config changes, and stale tests when the supplied context supports it.`;
 
   const candidateReview = await callOpenRouter<CodeReview>(aiConfig.apiKey, getModelForTask(aiConfig, "review"), [
